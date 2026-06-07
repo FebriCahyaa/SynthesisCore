@@ -24,6 +24,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.os.Build
 import android.os.IBinder
+import android.media.AudioManager
+import android.os.BatteryManager
 import android.os.PowerManager
 
 import java.io.File
@@ -43,6 +45,9 @@ object MainKt {
     private const val PID_RETRY_INTERVAL_MS = 50L
     private const val UNKNOWN_APP = "unknown 0 0"
     private const val NONE_APP = "none 0 0"
+
+    // getThermalHeadroom() requires API 31+
+    private const val THERMAL_API_MIN_SDK = 31
 
     private val FOREGROUND_METHOD_CANDIDATES = listOf(
         "getFocusedRootTaskInfo",
@@ -69,26 +74,31 @@ object MainKt {
     private var foregroundMethod: Method? = null
     private var powerManager: PowerManager? = null
     private var activityManager: ActivityManager? = null
+    private var audioManager: AudioManager? = null
+    private var batteryManager: BatteryManager? = null
     private var notificationManager: Any? = null
     private var getZenModeMethod: Method? = null
+
+    // getThermalHeadroom() is available from API 31+; resolved once at init.
+    private var getThermalHeadroomMethod: Method? = null
 
     private var bruteForceCandidates: List<Method>? = null
 
     @Volatile
     private var lastStatus = ""
 
-    private var synthesisCorePath = ""
+    private var outputPath = ""
     private var lockFilePath: String? = null
 
     @JvmStatic
     fun main(args: Array<String>) {
-        // Usage: app_process / com.febricahyaa.synthesiscore.MainKt <synthesis_core_path> [lock_file_path]
+        // Usage: app_process / com.febricahyaa.synthesiscore.MainKt <output_path> [lock_file_path]
         if (args.isEmpty()) {
-            System.err.println("Usage: <synthesis_core_path> [lock_file_path]")
-            System.err.println("ERROR: synthesis_core path is required.")
+            System.err.println("Usage: <output_path> [lock_file_path]")
+            System.err.println("ERROR: output path is required.")
             return
         }
-        synthesisCorePath = args[0]
+        outputPath = args[0]
 
         if (args.size >= 2) {
             lockFilePath = args[1]
@@ -184,7 +194,13 @@ object MainKt {
     }
 
     private fun bypassHiddenApiRestrictions() {
-        HiddenApiBypass.addHiddenApiExemptions("")
+        try {
+            HiddenApiBypass.addHiddenApiExemptions("")
+        } catch (e: Exception) {
+            // Hidden API bypass failed — features relying on private APIs
+            // (zen mode, ATM foreground detection) will degrade gracefully.
+            System.err.println("WARN: HiddenApiBypass failed, some features may be unavailable: \${e.message}")
+        }
     }
 
     private fun initializeServices(): Boolean {
@@ -192,8 +208,11 @@ object MainKt {
             val ctx = systemContext ?: return false
             powerManager = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
             activityManager = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            batteryManager = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
             initActivityTaskManager()
             initNotificationManager()
+            initThermalHeadroomMethod()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -219,6 +238,20 @@ object MainKt {
                     getZenModeMethod = member
                 }
             }
+        }
+    }
+
+    /**
+     * Resolve getThermalHeadroom() once at startup.
+     * Available on API 31+; silently skipped on older versions.
+     */
+    private fun initThermalHeadroomMethod() {
+        if (Build.VERSION.SDK_INT < THERMAL_API_MIN_SDK) return
+        try {
+            getThermalHeadroomMethod = PowerManager::class.java
+                .getMethod("getThermalHeadroom", Int::class.javaPrimitiveType)
+        } catch (e: NoSuchMethodException) {
+            System.err.println("WARN: getThermalHeadroom() not available on this build: \${e.message}")
         }
     }
 
@@ -264,7 +297,7 @@ object MainKt {
         if (currentStatus == lastStatus) return
 
         try {
-            val file = File(synthesisCorePath)
+            val file = File(outputPath)
             file.parentFile?.mkdirs()
 
             FileOutputStream(file).use { fos ->
@@ -321,12 +354,70 @@ object MainKt {
         val screenAwake = if (powerManager?.isInteractive == true) 1 else 0
         val batterySaver = if (powerManager?.isPowerSaveMode == true) 1 else 0
         val zenMode = getZenMode()
+        val chargingState = getChargingState()
+        val thermalStatus = getThermalStatus()
+        val audioActive = if (isAudioActive()) 1 else 0
 
         return buildString {
             appendLine("focused_app $focusedApp")
             appendLine("screen_awake $screenAwake")
             appendLine("battery_saver $batterySaver")
             appendLine("zen_mode $zenMode")
+            appendLine("charging_state $chargingState")
+            appendLine("thermal_status $thermalStatus")
+            appendLine("audio_active $audioActive")
+        }
+    }
+
+    /**
+     * Returns the current charging state as an integer:
+     *   0 = not charging / discharging
+     *   1 = charging (AC, USB, or wireless)
+     *
+     * Uses [BatteryManager.isCharging] which is available from API 23+.
+     * Falls back to 0 gracefully if the service is unavailable.
+     */
+    private fun getChargingState(): Int {
+        return try {
+            if (batteryManager?.isCharging == true) 1 else 0
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    /**
+     * Returns true if any audio stream is currently active (music, game audio, etc.).
+     *
+     * Checks [AudioManager.isMusicActive] which covers MediaPlayer/ExoPlayer/AudioTrack
+     * usage — the most common audio streams in mobile games.
+     * Falls back to false if the audio service is unavailable.
+     */
+    private fun isAudioActive(): Boolean {
+        return try {
+            audioManager?.isMusicActive == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Returns a normalised thermal headroom value clamped to [0.0, 1.0].
+     *
+     * 1.0 = no thermal pressure (cool)
+     * 0.0 = device is at thermal limit (hot)
+     *
+     * Uses [PowerManager.getThermalHeadroom] with a 1-second forecast window,
+     * available from API 31+. Returns -1.00 on unsupported devices or on error.
+     */
+    private fun getThermalStatus(): String {
+        if (Build.VERSION.SDK_INT < THERMAL_API_MIN_SDK) return "-1.00"
+        return try {
+            val method = getThermalHeadroomMethod ?: return "-1.00"
+            val headroom = method.invoke(powerManager, 1) as? Float ?: return "-1.00"
+            val clamped = headroom.coerceIn(0f, 1f)
+            "%.2f".format(clamped)
+        } catch (_: Exception) {
+            "-1.00"
         }
     }
 
