@@ -1,0 +1,91 @@
+# Repository labels for SynthesisCore
+# Apply these via: GitHub Settings → Labels
+# Or use a tool like github-label-sync
+
+- name: "bug"
+  color: "d73a4a"
+  description: "Something isn't working correctly"
+
+- name: "enhancement"
+  color: "a2eeef"
+  description: "New feature or improvement"
+
+- name: "feature"
+  color: "0075ca"
+  description: "New feature request"
+
+- name: "fix"
+  color: "e4e669"
+  description: "A bug fix"
+
+- name: "performance"
+  color: "f9d0c4"
+  description: "Performance improvement"
+
+- name: "breaking-change"
+  color: "b60205"
+  description: "Introduces a breaking change"
+
+- name: "dependencies"
+  color: "0366d6"
+  description: "Dependency version updates"
+
+- name: "gradle"
+  color: "02303a"
+  description: "Gradle build system related"
+
+- name: "github-actions"
+  color: "000000"
+  description: "GitHub Actions workflow changes"
+
+- name: "ci"
+  color: "e4e669"
+  description: "CI/CD configuration changes"
+
+- name: "chore"
+  color: "fef2c0"
+  description: "Maintenance tasks"
+
+- name: "refactor"
+  color: "d4c5f9"
+  description: "Code refactoring without behavior change"
+
+- name: "documentation"
+  color: "0075ca"
+  description: "Documentation improvements"
+
+- name: "docs"
+  color: "0075ca"
+  description: "Documentation improvements"
+
+- name: "stale"
+  color: "ededed"
+  description: "No recent activity — will be closed soon"
+
+- name: "pinned"
+  color: "e99695"
+  description: "Exempt from stale bot closure"
+
+- name: "security"
+  color: "ee0701"
+  description: "Security-related issue or fix"
+
+- name: "in-progress"
+  color: "fbca04"
+  description: "Currently being worked on"
+
+- name: "help wanted"
+  color: "008672"
+  description: "Extra attention or help is needed"
+
+- name: "work-in-progress"
+  color: "fbca04"
+  description: "PR is not ready to merge yet"
+
+- name: "wip"
+  color: "fbca04"
+  description: "Work in progress"
+
+- name: "patch"
+  color: "e4e669"
+  description: "Small patch or hotfix"

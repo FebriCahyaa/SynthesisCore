@@ -1,0 +1,67 @@
+name: Stale
+
+on:
+  schedule:
+    # Run every day at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  stale:
+    name: Mark & Close Stale Issues/PRs
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Stale
+        uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+          # ── Issues ────────────────────────────────────────────
+          days-before-issue-stale: 30
+          days-before-issue-close: 7
+          stale-issue-label: "stale"
+          stale-issue-message: |
+            👋 Hi there! This issue has been inactive for **30 days**.
+            It will be automatically closed in **7 days** if there is no further activity.
+
+            If this issue is still relevant, please:
+            - Leave a comment with any updates or additional info
+            - Remove the `stale` label to reset the timer
+
+            Thank you for contributing to SynthesisCore! 🙏
+
+          close-issue-message: |
+            🔒 This issue has been automatically closed due to **37 days of inactivity**.
+
+            If you believe this issue is still valid, feel free to reopen it with updated information.
+
+          # ── Pull Requests ─────────────────────────────────────
+          days-before-pr-stale: 21
+          days-before-pr-close: 7
+          stale-pr-label: "stale"
+          stale-pr-message: |
+            👋 This pull request has been inactive for **21 days**.
+            It will be automatically closed in **7 days** if there is no further activity.
+
+            If this PR is still in progress:
+            - Push an update or leave a comment
+            - Remove the `stale` label to reset the timer
+
+          close-pr-message: |
+            🔒 This pull request has been automatically closed due to **28 days of inactivity**.
+
+            If you'd like to continue this work, feel free to reopen or submit a new PR.
+
+          # ── Exemptions ────────────────────────────────────────
+          exempt-issue-labels: "pinned,security,in-progress,help wanted"
+          exempt-pr-labels: "pinned,security,in-progress,work-in-progress,wip"
+          exempt-all-assignees: true
+
+          # ── Limits ────────────────────────────────────────────
+          operations-per-run: 100
+          remove-stale-when-updated: true
+          delete-branch: false
