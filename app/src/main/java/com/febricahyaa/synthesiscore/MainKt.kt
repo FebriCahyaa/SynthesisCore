@@ -414,6 +414,10 @@ object MainKt {
         return try {
             val method = getThermalHeadroomMethod ?: return "-1.00"
             val headroom = method.invoke(powerManager, 1) as? Float ?: return "-1.00"
+            // getThermalHeadroom() may return NaN on devices whose thermal HAL
+            // does not provide a valid headroom value even when the API is present.
+            // NaN.coerceIn() stays NaN, so we must guard explicitly.
+            if (headroom.isNaN()) return "-1.00"
             val clamped = headroom.coerceIn(0f, 1f)
             "%.2f".format(clamped)
         } catch (_: Exception) {
