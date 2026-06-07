@@ -77,18 +77,18 @@ object MainKt {
     @Volatile
     private var lastStatus = ""
 
-    private var outputPath = ""
+    private var synthesisCorePath = ""
     private var lockFilePath: String? = null
 
     @JvmStatic
     fun main(args: Array<String>) {
-        // Usage: app_process / com.febricahyaa.synthesiscore.MainKt <output_path> [lock_file_path]
+        // Usage: app_process / com.febricahyaa.synthesiscore.MainKt <synthesis_core_path> [lock_file_path]
         if (args.isEmpty()) {
-            System.err.println("Usage: <output_path> [lock_file_path]")
-            System.err.println("ERROR: output path is required.")
+            System.err.println("Usage: <synthesis_core_path> [lock_file_path]")
+            System.err.println("ERROR: synthesis_core path is required.")
             return
         }
-        outputPath = args[0]
+        synthesisCorePath = args[0]
 
         if (args.size >= 2) {
             lockFilePath = args[1]
@@ -264,7 +264,7 @@ object MainKt {
         if (currentStatus == lastStatus) return
 
         try {
-            val file = File(outputPath)
+            val file = File(synthesisCorePath)
             file.parentFile?.mkdirs()
 
             FileOutputStream(file).use { fos ->
