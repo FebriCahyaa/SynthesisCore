@@ -1,10 +1,12 @@
 name: Build
 
 on:
-  push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual build trigger'
+        required: false
+        default: 'Manual build'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,12 +19,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -50,6 +52,7 @@ jobs:
           APK=$(find app/build/outputs/apk/release -name "*-unsigned.apk" | head -1)
           if [ -z "$APK" ]; then
             echo "No unsigned APK found — assuming Gradle signing config handled it."
+            rm -f keystore.jks
             exit 0
           fi
 
@@ -67,7 +70,9 @@ jobs:
           rm -f keystore.jks
 
       - name: Upload signed APK
-        uses: actions/upload-artifact@v6
+        if: success()
+        id: upload_apk
+        uses: actions/upload-artifact@v4
         with:
           name: SynthesisCore-${{ github.sha }}
           path: |
@@ -75,3 +80,30 @@ jobs:
             !app/build/outputs/apk/release/*-unsigned.apk
           retention-days: 30
           if-no-files-found: error
+
+      - name: Make notify script executable
+        if: always()
+        run: chmod +x .github/scripts/notify_telegram.sh
+
+      - name: Send Telegram build notification
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TG_DEV_ID: ${{ secrets.TELEGRAM_DEV_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          BUILD_STATUS="${{ job.status }}"
+
+          # Construct artifact URL if build succeeded
+          ARTIFACT_URL=""
+          if [ "${BUILD_STATUS}" = "success" ]; then
+            ARTIFACT_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+          .github/scripts/notify_telegram.sh build "${BUILD_STATUS}" "${ARTIFACT_URL}"

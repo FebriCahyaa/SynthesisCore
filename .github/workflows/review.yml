@@ -1,0 +1,77 @@
+name: Review
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Source Review & Notify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Collect change statistics
+        id: stats
+        run: |
+          # Determine base commit
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          fi
+
+          # Fallback for first-ever push (before SHA is all zeros)
+          EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+          if [ "${BASE}" = "0000000000000000000000000000000000000000" ] || [ -z "${BASE}" ]; then
+            BASE="${EMPTY_TREE}"
+          fi
+
+          # Collect file count and line stats
+          CHANGED_FILES_COUNT=$(git diff --name-only "${BASE}" "${HEAD}" 2>/dev/null | wc -l || echo 0)
+          ADDED_LINES=$(git diff --numstat "${BASE}" "${HEAD}" 2>/dev/null | awk '{sum += $1} END {print sum+0}')
+          REMOVED_LINES=$(git diff --numstat "${BASE}" "${HEAD}" 2>/dev/null | awk '{sum += $2} END {print sum+0}')
+
+          # Build a human-readable diff report and save as a file
+          git diff --stat "${BASE}" "${HEAD}" 2>/dev/null > /tmp/diff_report.txt || true
+          echo "" >> /tmp/diff_report.txt
+          echo "--- Changed files ---" >> /tmp/diff_report.txt
+          git diff --name-status "${BASE}" "${HEAD}" 2>/dev/null >> /tmp/diff_report.txt || true
+
+          echo "changed_files=${CHANGED_FILES_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "added_lines=${ADDED_LINES}" >> "$GITHUB_OUTPUT"
+          echo "removed_lines=${REMOVED_LINES}" >> "$GITHUB_OUTPUT"
+
+      - name: Make notify script executable
+        run: chmod +x .github/scripts/notify_telegram.sh
+
+      - name: Send Telegram review notification
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TG_DEV_ID: ${{ secrets.TELEGRAM_DEV_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          .github/scripts/notify_telegram.sh review \
+            "${{ steps.stats.outputs.changed_files }}" \
+            "${{ steps.stats.outputs.added_lines }}" \
+            "${{ steps.stats.outputs.removed_lines }}" \
+            "/tmp/diff_report.txt"
