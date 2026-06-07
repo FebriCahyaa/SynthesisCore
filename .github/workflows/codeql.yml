@@ -9,6 +9,11 @@ on:
     # Run every Monday at 08:00 WIB (01:00 UTC)
     - cron: '0 1 * * 1'
 
+permissions:
+  security-events: write
+  actions: read
+  contents: read
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
