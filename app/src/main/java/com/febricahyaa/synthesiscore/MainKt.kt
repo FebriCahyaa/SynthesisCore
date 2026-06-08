@@ -199,7 +199,7 @@ object MainKt {
         } catch (e: Exception) {
             // Hidden API bypass failed — features relying on private APIs
             // (zen mode, ATM foreground detection) will degrade gracefully.
-            System.err.println("WARN: HiddenApiBypass failed, some features may be unavailable: \${e.message}")
+            System.err.println("WARN: HiddenApiBypass failed, some features may be unavailable: ${e.message}")
         }
     }
 
@@ -251,10 +251,10 @@ object MainKt {
             getThermalHeadroomMethod = PowerManager::class.java
                 .getMethod("getThermalHeadroom", Int::class.javaPrimitiveType)
         } catch (e: NoSuchMethodException) {
-            System.err.println("WARN: getThermalHeadroom() not available on this build: \${e.message}")
+            System.err.println("WARN: getThermalHeadroom() not available on this build: ${e.message}")
         }
     }
-
+    
     /**
      * Returns true if running on a GKI (Generic Kernel Image) kernel.
      *
@@ -356,7 +356,7 @@ object MainKt {
         }
 
         // Timed out, write the app with 0 0 as PID/UID anyway.
-        System.err.println("DEBUG: PID still unresolved after ${POLL_INTERVAL_MS}ms for '$focusedApp'.")
+        System.err.println("WARN: PID still unresolved after ${POLL_INTERVAL_MS}ms for '$focusedApp'.")
         return focusedApp
     }
 
@@ -374,10 +374,7 @@ object MainKt {
         val chargingState = getChargingState()
         val thermalStatus = getThermalStatus()
         val audioActive = if (isAudioActive()) 1 else 0
-        // 1 if getThermalHeadroom() was successfully resolved at init, 0 otherwise.
-        // Lets the WebUI distinguish "API absent" from "API present but returning NaN".
         val thermalApiAvailable = if (getThermalHeadroomMethod != null) 1 else 0
-        // 1 if running on a GKI kernel (uname -r contains "-androidXX-"), 0 for vendor/OEM kernels.
         val kernelIsGki = if (isGkiKernel()) 1 else 0
 
         return buildString {
@@ -633,12 +630,9 @@ object MainKt {
             activityManager?.runningAppProcesses
                 ?.find { it.processName == pkg || it.pkgList?.contains(pkg) == true }
                 ?.let { "${it.pid} ${it.uid}" }
-                ?: run {
-                    System.err.println("DEBUG: No running process found for package '$pkg'")
-                    "0 0"
-                }
+                ?: "0 0"
         } catch (e: Exception) {
-            System.err.println("DEBUG: getPidUid failed for '$pkg': ${e.message}")
+            System.err.println("WARN: getPidUid failed for '$pkg': ${e.message}")
             "0 0"
         }
     }
