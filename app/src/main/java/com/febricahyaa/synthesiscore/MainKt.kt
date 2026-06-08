@@ -255,6 +255,23 @@ object MainKt {
         }
     }
 
+    /**
+     * Returns true if running on a GKI (Generic Kernel Image) kernel.
+     *
+     * GKI kernels are identified by the "-androidXX-" segment in `uname -r`,
+     * e.g. "5.15.123-android13-8-00001-gabcdef". Vendor/OEM kernels carry
+     * device-specific suffixes instead (e.g. "-perf+", "-qcom-le") and
+     * return false.
+     */
+    private fun isGkiKernel(): Boolean {
+        return try {
+            val kernelVersion = System.getProperty("os.version") ?: ""
+            kernelVersion.contains(Regex("-android\\d+-"))
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun resolveAtmServiceName() =
         if (Build.VERSION.SDK_INT >= 29) "activity_task" else Context.ACTIVITY_SERVICE
 
@@ -357,6 +374,11 @@ object MainKt {
         val chargingState = getChargingState()
         val thermalStatus = getThermalStatus()
         val audioActive = if (isAudioActive()) 1 else 0
+        // 1 if getThermalHeadroom() was successfully resolved at init, 0 otherwise.
+        // Lets the WebUI distinguish "API absent" from "API present but returning NaN".
+        val thermalApiAvailable = if (getThermalHeadroomMethod != null) 1 else 0
+        // 1 if running on a GKI kernel (uname -r contains "-androidXX-"), 0 for vendor/OEM kernels.
+        val kernelIsGki = if (isGkiKernel()) 1 else 0
 
         return buildString {
             appendLine("focused_app $focusedApp")
@@ -366,6 +388,8 @@ object MainKt {
             appendLine("charging_state $chargingState")
             appendLine("thermal_status $thermalStatus")
             appendLine("audio_active $audioActive")
+            appendLine("thermal_api_available $thermalApiAvailable")
+            appendLine("kernel_is_gki $kernelIsGki")
         }
     }
 
