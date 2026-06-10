@@ -314,16 +314,33 @@ object MainKt {
         if (currentStatus == lastStatus) return
 
         try {
-            val file = File(outputPath)
-            file.parentFile?.mkdirs()
+            val targetFile = File(outputPath)
+            targetFile.parentFile?.mkdirs()
 
-            FileOutputStream(file).use { fos ->
+            // Write atomically: write to a .tmp sibling then rename.
+            // This prevents the C++ daemon from reading a partial file if we are
+            // interrupted mid-write (e.g. OOM-killed or process restart).
+            // inotify IN_CLOSE_WRITE fires on the rename target once the kernel
+            // has moved the file into place, so the watcher is correctly triggered.
+            val tmpFile = File("$outputPath.tmp")
+            FileOutputStream(tmpFile).use { fos ->
                 fos.write(currentStatus.toByteArray(Charsets.UTF_8))
                 fos.fd.sync()
             }
 
+            if (!tmpFile.renameTo(targetFile)) {
+                // renameTo can fail across filesystems (shouldn't happen here, but be safe).
+                // Fall back to direct overwrite so the C++ side isn't starved of updates.
+                System.err.println("WARN: atomic rename failed for $outputPath, falling back to direct write")
+                FileOutputStream(targetFile).use { fos ->
+                    fos.write(currentStatus.toByteArray(Charsets.UTF_8))
+                    fos.fd.sync()
+                }
+            }
+
             lastStatus = currentStatus
         } catch (e: Exception) {
+            System.err.println("ERROR: writeStatus failed: ${e.message}")
             e.printStackTrace()
         }
     }
