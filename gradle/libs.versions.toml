@@ -1,9 +1,11 @@
 [versions]
 agp = "9.2.1"
 hiddenapibypass = "6.1"
+junit = "4.13.2"
 
 [libraries]
 hiddenapibypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", version.ref = "hiddenapibypass" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
