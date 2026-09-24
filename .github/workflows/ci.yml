@@ -1,0 +1,53 @@
+name: CI
+
+# Compile and unit-test every push and pull request so broken changes are caught
+# before a signed release build. No secrets are used and nothing is published
+# outside the workflow run; the signed build stays in build.yml.
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # versionCode is derived from `git rev-list --count HEAD`
+          fetch-depth: 0
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+
+      - name: Build release APK (unsigned)
+        run: ./gradlew assembleRelease
+
+      # app_process loads the dex directly, so the unsigned APK is usable for
+      # on-device testing of a branch before a signed release is cut.
+      - name: Upload unsigned APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: SynthesisCore-unsigned-${{ github.sha }}
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 7
+          if-no-files-found: error

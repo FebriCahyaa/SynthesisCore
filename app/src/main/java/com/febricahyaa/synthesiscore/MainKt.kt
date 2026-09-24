@@ -55,6 +55,16 @@ object MainKt {
     // getThermalHeadroom() requires API 31+
     private const val THERMAL_API_MIN_SDK = 31
 
+    /**
+     * Version of the output format and CLI contract, written as `synthesis_version`.
+     * Bump whenever a field or CLI mode is added, removed or changes meaning so
+     * consumers (Flux) can detect a mismatched prebuilt APK.
+     *
+     * 1 = initial fields up to kernel_is_gki (implicit; the field did not exist yet)
+     * 2 = synthesis_version field, --resolve mode
+     */
+    const val PROTOCOL_VERSION = 2
+
     private const val RESOLVE_FLAG = "--resolve"
     private const val TRANSACTION_PREFIX = "TRANSACTION_"
 
@@ -481,6 +491,7 @@ object MainKt {
         val audioActive = if (isAudioActive()) 1 else 0
 
         return buildString {
+            appendLine("synthesis_version $PROTOCOL_VERSION")
             appendLine("focused_app $focusedApp")
             appendLine("screen_awake $screenAwake")
             appendLine("battery_saver $batterySaver")
@@ -728,7 +739,7 @@ object MainKt {
         return null
     }
 
-    private fun extractPackageName(input: String?): String? {
+    internal fun extractPackageName(input: String?): String? {
         if (input == null || input.indexOf('.') <= 0) return null
         val normalized = input.lowercase().replace(PACKAGE_SANITIZE_REGEX, " ")
         return normalized.split(WHITESPACE_REGEX).find {
@@ -869,7 +880,7 @@ object MainKt {
      * (e.g. "android.os.IPowerManager.Stub" -> "android.os.IPowerManager$Stub").
      * Trailing dots are converted to '$' one at a time until a class is found.
      */
-    private fun resolveClass(className: String): Class<*> {
+    internal fun resolveClass(className: String): Class<*> {
         var candidate = className
         while (true) {
             try {

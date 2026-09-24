@@ -55,4 +55,5 @@ android {
 
 dependencies {
     implementation(libs.hiddenapibypass)
+    testImplementation(libs.junit)
 }

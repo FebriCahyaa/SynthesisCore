@@ -40,6 +40,7 @@ It runs as a standalone process using `app_process`, which gives it access to th
 SynthesisCore writes a plain-text key-value file, updated only when any value changes (`fd.sync()` guaranteed):
 
 ```text
+synthesis_version 2
 focused_app com.rhmsoft.edit.pro 4720 10292
 screen_awake 1
 battery_saver 0
@@ -55,6 +56,7 @@ kernel_is_gki 1
 
 | Field | Type | Description |
 |---|---|---|
+| `synthesis_version` | `int` | Output format / CLI contract version (see `PROTOCOL_VERSION`). Missing = 1 |
 | `focused_app` | `string int int` | Foreground package name, PID, UID |
 | `screen_awake` | `0\|1` | Whether the display is interactive |
 | `battery_saver` | `0\|1` | Power Save Mode active |
@@ -154,9 +156,12 @@ The diagram at the top of this page shows the full data flow. In short:
 ```shell
 # Standard Gradle release build
 ./gradlew assembleRelease
+
+# Unit tests
+./gradlew testDebugUnitTest
 ```
 
-The APK is self-contained and intended to be run via `app_process`, not installed normally. The GitHub Actions CI workflow builds and signs the APK automatically on every push to `master`.
+The APK is self-contained and intended to be run via `app_process`, not installed normally. The `CI` workflow runs unit tests and builds an unsigned APK on every push and pull request (usable for on-device testing, since `app_process` does not check signatures). Signed release builds are produced by the manually triggered `Build` workflow.
 
 **Requirements:** JDK 25 · Android Gradle Plugin 9.x · `compileSdk 36`
 
