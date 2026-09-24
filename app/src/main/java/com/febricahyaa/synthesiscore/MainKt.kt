@@ -424,8 +424,8 @@ object MainKt {
         // Write atomically: write to a .tmp sibling then rename.
         // This prevents the C++ daemon from reading a partial file if we are
         // interrupted mid-write (e.g. OOM-killed or process restart).
-        // inotify IN_CLOSE_WRITE fires on the rename target once the kernel
-        // has moved the file into place, so the watcher is correctly triggered.
+        // Note: the rename raises IN_MOVED_TO (not IN_CLOSE_WRITE) on the target
+        // name, so inotify watchers must listen for IN_MOVED_TO as well.
         val tmpFile = File("$path.tmp")
         FileOutputStream(tmpFile).use { fos ->
             fos.write(content.toByteArray(Charsets.UTF_8))
