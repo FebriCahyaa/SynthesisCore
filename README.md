@@ -1,39 +1,46 @@
-# Synthesis Core
+# SynthesisCore
 
 <p align="center">
-  <img src="diagram.svg" alt="SynthesisCore Architecture" width="100%"/>
+  <b>Event-driven Android system monitor for root daemons — a modern replacement for <code>dumpsys</code></b><br/>
+  Kotlin · runs via <code>app_process</code> · Android 9 – 17
 </p>
 
 <p align="center">
-  <b>Fast, native Android system monitor — a modern replacement for <code>dumpsys</code></b><br/>
-  Built with Kotlin · Runs via <code>app_process</code> · Zero external dependencies
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Android-API%2028%2B-3DDC84?logo=android&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Android-9%E2%80%9317%20(API%2028%E2%80%9337)-3DDC84?logo=android&logoColor=white"/>
   <img src="https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue"/>
   <img src="https://img.shields.io/badge/Used%20By-Flux%20Tweaks-6C63FF"/>
 </p>
 
+- [What is SynthesisCore?](#what-is-synthesiscore)
+- [Output format](#output-format)
+- [Usage](#usage)
+- [Architecture](#architecture)
+- [Compatibility](#compatibility)
+- [Security](#security)
+- [Releases and changelog](#releases-and-changelog)
+- [Building](#building)
+- [License](#license)
+
 ---
 
 ## What is SynthesisCore?
 
-SynthesisCore is a lightweight background daemon that monitors critical Android system state in real-time and exposes it as a simple plain-text file. It is designed to be polled or watched via `inotify` by other native daemons — most notably [Flux Tweaks](https://github.com/febricahyaa/Flux).
+SynthesisCore is a lightweight daemon that tracks the Android system state a performance module
+needs — foreground app, screen, power, thermal, audio, battery — and publishes it as a small
+plain-text file that native daemons such as [Flux Tweaks](https://github.com/FebriCahyaa/Flux)
+watch with `inotify`.
 
-It runs as a standalone process using `app_process`, which gives it access to the full Android Java framework stack (including hidden/internal APIs) without needing to be installed as a regular app.
-
-### Why not `dumpsys`?
+It runs through `app_process`, so it has the full Android framework (including hidden APIs)
+without being installed as an app. Where the platform offers a callback, SynthesisCore listens
+instead of polling, and the file is only rewritten when a value changes.
 
 | | SynthesisCore | `dumpsys` |
 |---|---|---|
-| **Speed** | Polls in ~500 ms, sub-50 ms PID retry | Limited to ~1 s intervals |
-| **Precision** | Returns exactly the fields you need | Dumps everything, requires custom parsing |
-| **Overhead** | Minimal — single persistent process | Spawns a new process on every call |
-| **Integration** | `inotify`-friendly file output | Requires shell piping |
-
----
+| **Latency** | Framework callbacks; ~1 s safety polls | One snapshot per invocation |
+| **Precision** | Exactly the fields consumers need | Dumps everything, needs custom parsing |
+| **Overhead** | One persistent process, polls slow down with the screen off | Spawns a process per call |
+| **Integration** | Atomic, `inotify`-friendly file | Shell piping |
 
 ## Output Format
 
@@ -79,8 +86,6 @@ Consumers must ignore unknown keys. A key that is absent means the value is unsu
 | `battery_temp` | `float` | Battery temperature in °C (from `/sys/class/power_supply/battery/temp`) |
 | `call_active` | `0\|1` | `1` = audio mode is a phone call, VoIP/communication or call screening |
 
----
-
 ## Usage
 
 ```shell
@@ -124,47 +129,6 @@ android.app.INotificationManager.Stub::TRANSACTION_getZenMode 123
 - Output goes to stdout, or is written atomically to the given file.
 - Entries that cannot be resolved are reported on stderr and omitted from the output.
 - Exit code: `0` all resolved, `1` some entries failed, `2` output could not be written.
-
----
-
-## Commit Roadmap
-
-Development is structured as discrete, reviewable commits. Each commit introduces exactly one new output field and its corresponding Android API integration.
-
-### ✅ v1.0.0 — Initial Release
-Core infrastructure: `focused_app`, `screen_awake`, `battery_saver`, `zen_mode`.
-
-### ✅ Field Expansion
-
-**Commit 1 — `feat: add charging_state field`**
-- Integrates `BatteryManager.isCharging()`
-- Enables Flux to allow more aggressive performance profiles while plugged in
-- No version gate required (API 23+, within our minSdk 28)
-
-**Commit 2 — `feat: add thermal_status field`**
-- Integrates `PowerManager.getThermalHeadroom(forecast=1s)`
-- Returns normalised float `[0.0–1.0]`; gracefully falls back to `-1.00` on API < 31
-- Enables thermal-aware profile tiering in Flux (Performance → PerformanceLite → Balance)
-
-**Commit 3 — `feat: add audio_active field`**
-- Integrates `AudioManager.isMusicActive()`
-- Detects in-game audio to help Flux avoid disruptive profile switches mid-session
-- No version gate required
-
-**Commit 4 — `fix: graceful HiddenApiBypass fallback`**
-- Wraps `HiddenApiBypass.addHiddenApiExemptions("")` in try/catch
-- Logs a warning instead of crashing if bypass fails on future Android versions
-- Degrades gracefully: features that depend on private APIs return sentinel values
-
-### ✅ v2.0.0 — Framework rewrite (protocol 3)
-- Monolithic poll loop replaced by an event-driven `Engine` with pluggable `StateProvider`s
-- Framework listeners instead of polling where available (UID importance, display, thermal status, audio playback, audio mode)
-- Public APIs instead of hidden ones where possible (zen mode via `NotificationManager`, thermal APIs called directly)
-- New fields: `thermal_level`, `battery_level`, `battery_temp`, `call_active`
-- Locale-independent number formatting (fixes `0,85` on comma-decimal locales)
-- `--once`, `--capabilities` and `--version` modes
-
----
 
 ## Architecture
 
@@ -223,23 +187,79 @@ dropped and reported as `FAILED`; the others keep working.
 3. Register it in `MainKt.createProviders()`.
 4. Teach the consumers (Flux `SynthesisCoreReader`, WebUI monitor store) to parse it.
 
----
+## Compatibility
+
+| Android | API | Notes |
+|---|---|---|
+| 9 | 28 | Minimum. Foreground via `IActivityManager`; no thermal fields |
+| 10 | 29 | `IActivityTaskManager`; `thermal_level` with status listener |
+| 11 – 15 | 30 – 35 | Thermal headroom (`thermal_status`) polled every second |
+| 16 | 36 | Headroom pushed by `addThermalHeadroomListener` when the ROM enables it |
+| 17 | 37 | Compiled and tested against the Android 17 framework (`compileSdk`/`targetSdk` 37) |
+
+Every framework mechanism is probed at startup and falls back gracefully. Run
+`MainKt --capabilities` on a device to see which providers are event-driven (`EVENT`), polled
+(`POLL`) or unavailable (`FAILED`) — include that output in bug reports.
+
+## Security
+
+SynthesisCore runs as root, so it treats its inputs and outputs defensively:
+
+- **Output** — keys are validated, control characters in values are replaced and values are
+  length-capped, so no value can inject a forged line into the status file. Files are written
+  through a temp file opened with `O_EXCL|O_NOFOLLOW`, `fsync`ed and renamed atomically: a
+  symlink planted next to the output cannot redirect writes.
+- **Input** — paths must be absolute and normalised; `--resolve` only accepts well-formed
+  `Class::FIELD` identifiers (bounded count and length) and only reads `static final int` fields.
+- **Binary** — release APKs are minified and obfuscated with R8 (only `MainKt.main` keeps its
+  name), signed with the project key, and published with a SHA-256 checksum, the signing
+  certificate digest and a GitHub build provenance attestation.
+- **Consumers** — Flux only syncs a release whose checksum *and* pinned signing certificate
+  verify, and re-checks the APK checksum on every boot before running it.
+
+Report vulnerabilities privately through GitHub security advisories rather than public issues.
+
+## Releases and changelog
+
+Releases are fully automated by [`release.yml`](.github/workflows/release.yml):
+
+1. Publish a GitHub release with a tag like `v2.1.0` — or run the **Release** workflow with a
+   version and it creates the tag and release for you.
+2. The workflow runs the tests, builds, signs and verifies the APK, and attaches:
+   - `SynthesisCore-v2.1.0.apk`
+   - `SynthesisCore-v2.1.0.apk.sha256`
+   - `SynthesisCore-v2.1.0.apk.cert.sha256` (signing certificate digest)
+3. The release notes get a changelog generated from the
+   [Conventional Commits](https://www.conventionalcommits.org) since the previous tag, grouped into
+   features, fixes, performance, etc. Hand-written notes above it are kept.
+4. Flux is notified and opens a verified sync pull request.
+
+Commit messages therefore follow `type(scope): description`, e.g. `feat(thermal): …`,
+`fix(foreground): …`; a `!` after the type or a `BREAKING CHANGE:` footer marks breaking changes.
+Preview the next changelog locally with `.github/scripts/changelog.sh`.
+
+### Verifying a release
+
+```shell
+sha256sum -c SynthesisCore-v2.1.0.apk.sha256
+apksigner verify --print-certs SynthesisCore-v2.1.0.apk     # compare with the release notes
+gh attestation verify SynthesisCore-v2.1.0.apk --repo FebriCahyaa/SynthesisCore
+```
+
+Release secrets: `KEYSTORE_BASE64`, `SIGNING_KEY_ALIAS`, `SIGNING_KEY_PASSWORD`,
+`SIGNING_STORE_PASSWORD`; optional `FLUX_DISPATCH_TOKEN` and the Telegram secrets.
 
 ## Building
 
 ```shell
-# Standard Gradle release build
-./gradlew assembleRelease
-
-# Unit tests
-./gradlew testDebugUnitTest
+./gradlew testDebugUnitTest   # unit tests
+./gradlew assembleRelease     # minified, unsigned release APK
 ```
 
-The APK is self-contained and intended to be run via `app_process`, not installed normally. The `CI` workflow runs unit tests and builds an unsigned APK on every push and pull request (usable for on-device testing, since `app_process` does not check signatures). Signed release builds are produced by the manually triggered `Build` workflow.
+**Requirements:** JDK 25 · Android Gradle Plugin 9.x · `compileSdk 37`
 
-**Requirements:** JDK 25 · Android Gradle Plugin 9.x · `compileSdk 36`
-
----
+The `CI` workflow runs the tests and builds an unsigned APK on every push and pull request; the APK
+is kept as a workflow artifact for on-device testing (`app_process` does not check signatures).
 
 ## License
 
