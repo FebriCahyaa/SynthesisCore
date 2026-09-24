@@ -1,0 +1,227 @@
+name: Release
+
+# Builds the signed APK for a GitHub release and attaches it with its SHA-256
+# checksum, signing certificate fingerprint and an auto-generated changelog.
+#
+#  - Publishing a release in the GitHub UI (tag vX.Y.Z) builds and attaches assets.
+#  - "Run workflow" with a version creates tag vX.Y.Z and the release in one go.
+#
+# Required secrets: KEYSTORE_BASE64, SIGNING_KEY_ALIAS, SIGNING_KEY_PASSWORD,
+# SIGNING_STORE_PASSWORD. Optional: FLUX_DISPATCH_TOKEN (notify Flux to sync),
+# TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID / TELEGRAM_DEV_ID (announcement).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without "v" (e.g. 2.1.0)'
+        required: true
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build, Sign & Publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the release and upload assets
+      id-token: write      # build provenance attestation
+      attestations: write
+    env:
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || format('v{0}', inputs.version) }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Validate tag
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Tag '$TAG' must look like v2.1.0 or v2.1.0-rc.1"
+            exit 1
+          fi
+          echo "VERSION_NAME=${TAG#v}" >>"$GITHUB_ENV"
+          echo "APK_NAME=SynthesisCore-${TAG}.apk" >>"$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # The release tag, or the dispatched commit for a new release
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          fetch-depth: 0 # versionCode and the changelog need the full history
+
+      - name: Refuse existing tag (manual release)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists; publish a release for it instead"
+            exit 1
+          fi
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Unit tests
+        run: chmod +x gradlew && ./gradlew testDebugUnitTest
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease
+
+      - name: Sign APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for var in KEYSTORE_BASE64 SIGNING_KEY_ALIAS SIGNING_KEY_PASSWORD SIGNING_STORE_PASSWORD; do
+            [[ -n "${!var}" ]] || { echo "::error::Secret $var is not set"; exit 1; }
+          done
+
+          build_tools="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          unsigned=$(find app/build/outputs/apk/release -name '*-unsigned.apk' | head -1)
+          [[ -n "$unsigned" ]] || { echo "::error::No unsigned APK produced"; exit 1; }
+
+          # Keystore lives outside the workspace, readable only by this user,
+          # and is removed by the cleanup step even if signing fails.
+          umask 077
+          keystore="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 --decode >"$keystore"
+
+          mkdir -p dist
+          # Passwords are read from the environment, never put on the command line.
+          "$build_tools/zipalign" -p -f 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
+          "$build_tools/apksigner" sign \
+            --ks "$keystore" \
+            --ks-key-alias "$SIGNING_KEY_ALIAS" \
+            --ks-pass env:SIGNING_STORE_PASSWORD \
+            --key-pass env:SIGNING_KEY_PASSWORD \
+            --out "dist/$APK_NAME" \
+            "$RUNNER_TEMP/aligned.apk"
+
+          "$build_tools/apksigner" verify --verbose --print-certs "dist/$APK_NAME" | tee "$RUNNER_TEMP/verify.txt"
+          cert=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/verify.txt" | head -1)
+          [[ -n "$cert" ]] || { echo "::error::Could not read the signing certificate digest"; exit 1; }
+          echo "CERT_SHA256=$cert" >>"$GITHUB_ENV"
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum "$APK_NAME" >"$APK_NAME.sha256"
+          echo "$CERT_SHA256" >"$APK_NAME.cert.sha256"
+          echo "APK_SHA256=$(cut -d' ' -f1 "$APK_NAME.sha256")" >>"$GITHUB_ENV"
+          cat "$APK_NAME.sha256"
+
+      - name: Build provenance attestation
+        # Sigstore-signed statement that this APK was built by this workflow from
+        # this commit. Verify with: gh attestation verify <apk> --repo <owner>/SynthesisCore
+        uses: actions/attest-build-provenance@v2
+        continue-on-error: true # unavailable for private repositories on some plans
+        with:
+          subject-path: dist/${{ env.APK_NAME }}
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          target="$TAG"
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] && target="$GITHUB_SHA"
+          previous=$(git describe --tags --abbrev=0 "${target}^" 2>/dev/null || true)
+
+          {
+            echo "<!-- synthesiscore:auto -->"
+            echo "## What's Changed"
+            echo
+            bash .github/scripts/changelog.sh "$target" "$previous" | sed "s|/compare/\(.*\)\.\.\.${GITHUB_SHA}|/compare/\1...${TAG}|"
+            echo
+            echo "## Verification"
+            echo
+            echo "| File | SHA-256 |"
+            echo "|---|---|"
+            echo "| \`$APK_NAME\` | \`$APK_SHA256\` |"
+            echo
+            echo "Signing certificate SHA-256: \`$CERT_SHA256\`"
+            echo
+            echo '```sh'
+            echo "sha256sum -c $APK_NAME.sha256"
+            echo "apksigner verify --print-certs $APK_NAME   # compare with the certificate above"
+            echo "gh attestation verify $APK_NAME --repo $GITHUB_REPOSITORY"
+            echo '```'
+          } >"$RUNNER_TEMP/generated.md"
+
+      - name: Create release (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          flags=()
+          [[ "$PRERELEASE" == "true" ]] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "SynthesisCore $TAG" \
+            --notes-file "$RUNNER_TEMP/generated.md" \
+            "${flags[@]}"
+
+      - name: Update published release
+        if: github.event_name == 'release'
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" dist/* --clobber
+          # Keep notes written by hand, replace a previously generated section.
+          gh release view "$TAG" --json body --jq .body | sed '/<!-- synthesiscore:auto -->/,$d' >"$RUNNER_TEMP/manual.md"
+          if [[ -s "$RUNNER_TEMP/manual.md" && -n "$(tr -d '[:space:]' <"$RUNNER_TEMP/manual.md")" ]]; then
+            { cat "$RUNNER_TEMP/manual.md"; echo; cat "$RUNNER_TEMP/generated.md"; } >"$RUNNER_TEMP/notes.md"
+          else
+            cp "$RUNNER_TEMP/generated.md" "$RUNNER_TEMP/notes.md"
+          fi
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: Archive R8 mapping
+        # Needed to retrace obfuscated stack traces; kept out of the public release.
+        uses: actions/upload-artifact@v7
+        with:
+          name: mapping-${{ env.TAG }}
+          path: app/build/outputs/mapping/release/mapping.txt
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Notify Flux
+        # Secrets cannot be tested in `if:`, so the step checks and skips itself.
+        env:
+          FLUX_DISPATCH_TOKEN: ${{ secrets.FLUX_DISPATCH_TOKEN }}
+          FLUX_REPOSITORY: ${{ vars.FLUX_REPOSITORY || 'FebriCahyaa/Flux' }}
+        run: |
+          [[ -n "$FLUX_DISPATCH_TOKEN" ]] || { echo "FLUX_DISPATCH_TOKEN not set, skipping"; exit 0; }
+          GH_TOKEN="$FLUX_DISPATCH_TOKEN" gh api "repos/$FLUX_REPOSITORY/dispatches" \
+            -f event_type=synthesiscore-release \
+            -f "client_payload[tag]=$TAG"
+
+      - name: Telegram announcement
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          TG_DEV_ID: ${{ secrets.TELEGRAM_DEV_ID }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHANNEL_ID" ]] || { echo "Telegram secrets not set, skipping"; exit 0; }
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          [[ "$JOB_STATUS" == "success" ]] || url=""
+          bash .github/scripts/notify_telegram.sh build "$JOB_STATUS" "$url"

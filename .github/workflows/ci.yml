@@ -2,7 +2,7 @@ name: CI
 
 # Compile and unit-test every push and pull request so broken changes are caught
 # before a signed release build. No secrets are used and nothing is published
-# outside the workflow run; the signed build stays in build.yml.
+# outside the workflow run; signed builds are produced by release.yml.
 on:
   push:
   pull_request:

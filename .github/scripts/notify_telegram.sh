@@ -24,6 +24,15 @@ set -euo pipefail
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Escape text for Telegram's HTML parse mode (commit messages are user input).
+html_escape() {
+    local text="$1"
+    text="${text//&/&amp;}"
+    text="${text//</&lt;}"
+    text="${text//>/&gt;}"
+    printf '%s' "$text"
+}
+
 require_env() {
     local var="$1"
     if [[ -z "${!var:-}" ]]; then
@@ -119,6 +128,7 @@ cmd_review() {
     # Build commit message (first line only, JSON-safe)
     local commit_msg
     commit_msg=$(git log -1 --pretty=format:"%s" 2>/dev/null | head -c 200 || echo "(unknown)")
+    commit_msg=$(html_escape "$commit_msg")
 
     local text
     text=$(cat <<EOF
@@ -168,6 +178,7 @@ cmd_build() {
 
     local commit_msg
     commit_msg=$(git log -1 --pretty=format:"%s" 2>/dev/null | head -c 200 || echo "(unknown)")
+    commit_msg=$(html_escape "$commit_msg")
 
     local status_icon status_label
     if [[ "$result" == "success" ]]; then
