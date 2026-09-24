@@ -19,11 +19,14 @@ package com.febricahyaa.synthesiscore.provider
 import android.os.Build
 import android.os.PowerManager
 
+import com.febricahyaa.synthesiscore.core.ListenerProxy
 import com.febricahyaa.synthesiscore.core.Log
 import com.febricahyaa.synthesiscore.core.Protocol
 import com.febricahyaa.synthesiscore.core.ProviderContext
 import com.febricahyaa.synthesiscore.core.StateProvider
 import com.febricahyaa.synthesiscore.core.TriggerMode
+
+import java.util.concurrent.Executor
 
 /**
  * `thermal_status` (headroom), `thermal_level` and `thermal_api_available`.
@@ -32,15 +35,17 @@ import com.febricahyaa.synthesiscore.core.TriggerMode
  *   [PowerManager.addThermalStatusListener]. 0 = none ... 6 = shutdown. This is the
  *   fallback when the vendor thermal HAL provides no headroom.
  * - thermal_status: [PowerManager.getThermalHeadroom] (API 30) with a 1 s forecast,
- *   normalised to [0.00, 1.00] where 1.00 = cool; -1.00 when unsupported/NaN. There is
- *   no headroom callback, so it is polled; PowerManager caches it client-side for
- *   500 ms anyway, so polling faster than that gains nothing.
+ *   normalised to [0.00, 1.00] where 1.00 = cool; -1.00 when unsupported/NaN.
+ *   Android 16+ pushes headroom changes through `addThermalHeadroomListener`; it is a
+ *   flagged API (android.os.allow_thermal_thresholds_callback) that ROMs may disable,
+ *   so it is bound by reflection and headroom falls back to a 1 s poll without it.
  */
 class ThermalProvider : StateProvider {
     override val name = "thermal"
 
     private lateinit var powerManager: PowerManager
     private var statusListener: PowerManager.OnThermalStatusChangedListener? = null
+    private var headroomListener: Any? = null
 
     override fun start(ctx: ProviderContext): TriggerMode {
         powerManager = ctx.context.getSystemService(PowerManager::class.java)
@@ -48,15 +53,19 @@ class ThermalProvider : StateProvider {
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return TriggerMode.POLL
 
-        return try {
+        try {
             val listener = PowerManager.OnThermalStatusChangedListener { ctx.invalidate(this) }
             powerManager.addThermalStatusListener(ctx.executor, listener)
             statusListener = listener
-            TriggerMode.EVENT
         } catch (t: Throwable) {
             Log.w(name, "Thermal status listener unavailable, polling instead: ${t.message}")
-            TriggerMode.POLL
+            return TriggerMode.POLL
         }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+            headroomListener = registerHeadroomListener(ctx)
+        }
+        return TriggerMode.EVENT
     }
 
     override fun sample(out: MutableMap<String, String>) {
@@ -68,15 +77,39 @@ class ThermalProvider : StateProvider {
         }
     }
 
-    override fun pollIntervalMs(mode: TriggerMode, interactive: Boolean): Long =
-        // Headroom has no callback: poll it every second while the screen is on.
-        if (interactive) 1_000L else 10_000L
+    override fun pollIntervalMs(mode: TriggerMode, interactive: Boolean): Long = when {
+        !interactive -> 10_000L
+        headroomListener != null -> 5_000L // safety net; changes arrive by callback
+        else -> 1_000L // no headroom callback: poll it every second
+    }
 
     override fun stop() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             statusListener?.let { powerManager.removeThermalStatusListener(it) }
         }
+        headroomListener?.let { listener ->
+            try {
+                PowerManager::class.java
+                    .getMethod("removeThermalHeadroomListener", Class.forName(HEADROOM_LISTENER))
+                    .invoke(powerManager, listener)
+            } catch (t: Throwable) {
+                Log.w(name, "Failed to remove headroom listener: ${t.message}")
+            }
+        }
         statusListener = null
+        headroomListener = null
+    }
+
+    /** Binds `addThermalHeadroomListener(Executor, listener)`; null when unavailable. */
+    private fun registerHeadroomListener(ctx: ProviderContext): Any? = try {
+        val listener = ListenerProxy.create(HEADROOM_LISTENER, "onThermalHeadroomChanged") { ctx.invalidate(this) }
+        PowerManager::class.java
+            .getMethod("addThermalHeadroomListener", Executor::class.java, Class.forName(HEADROOM_LISTENER))
+            .invoke(powerManager, ctx.executor, listener)
+        listener
+    } catch (t: Throwable) {
+        Log.w(name, "Thermal headroom listener unavailable, polling headroom: ${t.cause?.message ?: t.message}")
+        null
     }
 
     private fun readHeadroom(): String {
@@ -86,6 +119,7 @@ class ThermalProvider : StateProvider {
 
     companion object {
         private const val FORECAST_SECONDS = 1
+        private const val HEADROOM_LISTENER = "android.os.PowerManager\$OnThermalHeadroomChangedListener"
         const val UNSUPPORTED = "-1.00"
 
         /** Clamps to [0, 1]; NaN (no HAL support) becomes [UNSUPPORTED]. */

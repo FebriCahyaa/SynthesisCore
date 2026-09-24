@@ -66,12 +66,15 @@ object MainKt {
             }
             "--version" -> println(Protocol.VERSION)
             "--resolve" -> {
+                val outputPath = args.getOrNull(1)?.let(::requireSafePath)
                 SystemEnvironment.exemptHiddenApis()
-                exitProcess(BinderResolver.run(args.getOrNull(1)))
+                exitProcess(BinderResolver.run(outputPath))
             }
             "--once" -> exitProcess(runOnce(printCapabilities = false))
             "--capabilities" -> exitProcess(runOnce(printCapabilities = true))
-            else -> exitProcess(runMonitor(outputPath = mode, lockPath = args.getOrNull(1)))
+            else -> exitProcess(
+                runMonitor(outputPath = requireSafePath(mode), lockPath = args.getOrNull(1)?.let(::requireSafePath))
+            )
         }
     }
 
@@ -146,6 +149,25 @@ object MainKt {
             Log.e(TAG, "Failed to acquire lock at '$path': ${e.message}")
             exitProcess(EXIT_FAILURE)
         }
+    }
+
+    /**
+     * Accepts only absolute, normalised paths without control characters. This root
+     * process writes wherever it is told, so relative paths (resolved against an
+     * unknown working directory), `..` segments and embedded newlines are refused.
+     */
+    fun isSafePath(path: String): Boolean =
+        path.startsWith("/") &&
+                path.none { it.isISOControl() } &&
+                path.split('/').none { it == ".." || it == "." }
+
+    private fun requireSafePath(path: String): String {
+        if (!isSafePath(path)) {
+            Log.e(TAG, "Refusing unsafe path '${path.filterNot { it.isISOControl() }}': use an absolute path")
+            printUsage()
+            exitProcess(EXIT_FAILURE)
+        }
+        return path
     }
 
     private fun printUsage() {

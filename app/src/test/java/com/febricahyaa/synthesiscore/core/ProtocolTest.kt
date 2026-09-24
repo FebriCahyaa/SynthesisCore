@@ -69,4 +69,21 @@ class ProtocolTest {
         assertEquals("1", Protocol.flag(true))
         assertEquals("0", Protocol.flag(false))
     }
+
+    @Test
+    fun render_cannotBeInjectedWithExtraLines() {
+        val rendered = Protocol.render(
+            mapOf(
+                Protocol.FOCUSED_APP to "com.evil 1 2\nfocused_app com.forged 3 4",
+                "Bad-Key" to "x",
+                "bad\nkey" to "y",
+            )
+        )
+        assertEquals("synthesis_version ${Protocol.VERSION}\nfocused_app com.evil 1 2 focused_app com.forged 3 4\n", rendered)
+    }
+
+    @Test
+    fun sanitize_capsValueLength() {
+        assertEquals(192, Protocol.sanitize("x".repeat(1000)).length)
+    }
 }

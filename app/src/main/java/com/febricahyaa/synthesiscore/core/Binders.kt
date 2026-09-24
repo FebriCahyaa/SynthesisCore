@@ -85,10 +85,13 @@ object Binders {
         }
     }
 
-    /** Value of a static int field, e.g. a `TRANSACTION_*` code. */
+    /** Value of a `static final int` constant, e.g. a `TRANSACTION_*` code. */
     fun staticIntField(className: String, fieldName: String): Int {
         val field = resolveClass(className).getDeclaredField(fieldName)
-        require(Modifier.isStatic(field.modifiers)) { "$fieldName is not static" }
+        require(Modifier.isStatic(field.modifiers) && Modifier.isFinal(field.modifiers)) {
+            "$fieldName is not a static final constant"
+        }
+        require(field.type == Int::class.javaPrimitiveType) { "$fieldName is not an int" }
         field.isAccessible = true
         return field.getInt(null)
     }

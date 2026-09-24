@@ -85,7 +85,7 @@ class TaskResolver {
 
     private fun invokeCandidate(method: Method): Any? = try {
         when {
-            method.name in LIST_METHODS -> invokeWithArgs(method, arrayOf(1), arrayOf(1, 0), arrayOf(1, false, false))
+            method.name in LIST_METHODS -> invokeWithArgs(method, *LIST_METHOD_ARGS)
             method.parameterTypes.isEmpty() -> method.invoke(atm)
             else -> invokeWithArgs(method, arrayOf(0))
         }
@@ -159,7 +159,7 @@ class TaskResolver {
 
         var cls: Class<*>? = obj.javaClass
         while (cls != null && cls != Any::class.java) {
-            for (field in Binders.instanceFields(cls)) {
+            for (field in safeInstanceFields(cls)) {
                 try {
                     field.isAccessible = true
                     (field.get(obj) as? ComponentName)?.let { return it }
@@ -173,7 +173,7 @@ class TaskResolver {
 
     private fun packageLikeString(obj: Any): String? {
         PackageNames.extract(obj.toString())?.let { return it }
-        for (field in Binders.instanceFields(obj.javaClass)) {
+        for (field in safeInstanceFields(obj.javaClass)) {
             if (field.type != String::class.java) continue
             try {
                 field.isAccessible = true
@@ -182,6 +182,17 @@ class TaskResolver {
             }
         }
         return null
+    }
+
+    /**
+     * Field listing can be refused (hidden API policy, a failed bypass); treat that as
+     * "no fields" so one inaccessible class does not fail the whole lookup.
+     */
+    private fun safeInstanceFields(cls: Class<*>) = try {
+        Binders.instanceFields(cls)
+    } catch (t: Throwable) {
+        Log.once("fields:${cls.name}", "TaskResolver", "Cannot list fields of ${cls.name}: ${t.message}")
+        emptyList()
     }
 
     companion object {
@@ -202,6 +213,18 @@ class TaskResolver {
         )
 
         private val LIST_METHODS = setOf("getTasks", "getRunningTasks")
+
+        /**
+         * Argument sets tried for the task list methods, oldest signature first:
+         * getTasks(max), (max, flags), (max, filterOnlyVisibleRecents, keepIntentExtra),
+         * and (…, displayId) on Android 16+ (API 36/37).
+         */
+        private val LIST_METHOD_ARGS = arrayOf<Array<Any>>(
+            arrayOf(1),
+            arrayOf(1, 0),
+            arrayOf(1, false, false),
+            arrayOf(1, false, false, 0),
+        )
 
         private val COMPONENT_FIELDS = listOf(
             "topActivity",

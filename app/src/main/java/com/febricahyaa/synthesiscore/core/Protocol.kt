@@ -70,14 +70,30 @@ object Protocol {
 
     private val ORDER_INDEX = FIELD_ORDER.withIndex().associate { it.value to it.index }
 
-    /** Renders [values] in protocol order; unknown keys follow, sorted by name. */
+    /** Flux reads each line into a 256-byte buffer; keep key + value well below it. */
+    private const val MAX_VALUE_LENGTH = 192
+
+    private val KEY_REGEX = Regex("[a-z][a-z0-9_]{0,47}")
+    private val CONTROL_CHARS = Regex("[\\p{Cntrl}]")
+
+    /**
+     * Renders [values] in protocol order; unknown keys follow, sorted by name.
+     *
+     * The file is parsed line by line by native code, so it is kept strictly
+     * well-formed: keys that are not `[a-z][a-z0-9_]{0,47}` are dropped, control
+     * characters (newlines included) in values become spaces and values are capped at
+     * [MAX_VALUE_LENGTH]. A value can therefore never inject an extra line such as a
+     * forged `focused_app`, nor overflow a consumer's line buffer into the next key.
+     */
     fun render(values: Map<String, String>): String = buildString {
         append(SYNTHESIS_VERSION).append(' ').append(VERSION).append('\n')
         values.keys
-            .filter { it != SYNTHESIS_VERSION }
+            .filter { it != SYNTHESIS_VERSION && KEY_REGEX.matches(it) }
             .sortedWith(compareBy<String>({ ORDER_INDEX[it] ?: Int.MAX_VALUE }, { it }))
-            .forEach { key -> append(key).append(' ').append(values.getValue(key)).append('\n') }
+            .forEach { key -> append(key).append(' ').append(sanitize(values.getValue(key))).append('\n') }
     }
+
+    fun sanitize(value: String): String = value.replace(CONTROL_CHARS, " ").trim().take(MAX_VALUE_LENGTH)
 
     fun flag(value: Boolean): String = if (value) "1" else "0"
 

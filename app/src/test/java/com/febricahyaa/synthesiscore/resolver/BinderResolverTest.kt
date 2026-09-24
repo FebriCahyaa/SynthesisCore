@@ -27,10 +27,29 @@ class BinderResolverTest {
     @Test
     fun parseEntry_splitsClassAndField() {
         assertEquals("a.B" to "C", BinderResolver.parseEntry("a.B::C"))
+        assertEquals("a.B\$Stub" to "TRANSACTION_x", BinderResolver.parseEntry("a.B\$Stub::TRANSACTION_x"))
         assertNull(BinderResolver.parseEntry("no separator"))
         assertNull(BinderResolver.parseEntry("::C"))
         assertNull(BinderResolver.parseEntry("a.B::"))
         assertNull(BinderResolver.parseEntry("a::b::c"))
+    }
+
+    @Test
+    fun parseEntry_rejectsNonIdentifiers() {
+        assertNull(BinderResolver.parseEntry("NoPackage::C"))
+        assertNull(BinderResolver.parseEntry("a.B::C;rm -rf /"))
+        assertNull(BinderResolver.parseEntry("a..B::C"))
+        assertNull(BinderResolver.parseEntry("a.B::1C"))
+        assertNull(BinderResolver.parseEntry("a/b.C::D"))
+        assertNull(BinderResolver.parseEntry("a.B::" + "C".repeat(BinderResolver.MAX_LINE_LENGTH)))
+    }
+
+    @Test
+    fun resolve_capsNumberOfEntries() {
+        val lines = generateSequence { "java.lang.Integer::MAX_VALUE" }.take(BinderResolver.MAX_ENTRIES + 50)
+        val result = BinderResolver.resolve(lines, PrintStream(ByteArrayOutputStream(), true))
+        assertEquals(BinderResolver.MAX_ENTRIES, result.output.lines().count { it.isNotEmpty() })
+        assertEquals(1, result.failures)
     }
 
     @Test

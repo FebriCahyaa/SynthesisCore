@@ -2,7 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Never installed: the dex is loaded by app_process. No components are
+         declared, and backup/debugging are off in case the APK is ever installed. -->
     <application
+        android:allowBackup="false"
         android:label="@string/app_name"
         tools:ignore="MissingApplicationIcon" />
 

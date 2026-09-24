@@ -23,6 +23,11 @@ class BindersTest {
     class Holder {
         @JvmField
         var x = 1
+
+        companion object {
+            @JvmField
+            var mutableStatic = 2
+        }
     }
 
     @Test
@@ -48,5 +53,15 @@ class BindersTest {
     @Test(expected = IllegalArgumentException::class)
     fun staticIntField_rejectsInstanceField() {
         Binders.staticIntField(Holder::class.java.name, "x")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun staticIntField_rejectsMutableStatic() {
+        Binders.staticIntField(Holder::class.java.name, "mutableStatic")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun staticIntField_rejectsNonIntConstant() {
+        Binders.staticIntField("java.lang.Integer", "TYPE")
     }
 }

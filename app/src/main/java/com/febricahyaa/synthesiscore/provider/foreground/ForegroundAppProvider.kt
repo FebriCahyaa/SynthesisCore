@@ -19,23 +19,20 @@ package com.febricahyaa.synthesiscore.provider.foreground
 import android.annotation.SuppressLint
 import android.app.ActivityManager
 
+import com.febricahyaa.synthesiscore.core.ListenerProxy
 import com.febricahyaa.synthesiscore.core.Log
 import com.febricahyaa.synthesiscore.core.Protocol
 import com.febricahyaa.synthesiscore.core.ProviderContext
 import com.febricahyaa.synthesiscore.core.StateProvider
 import com.febricahyaa.synthesiscore.core.TriggerMode
 
-import java.lang.reflect.InvocationHandler
-import java.lang.reflect.Method
-import java.lang.reflect.Proxy
-
 /**
  * `focused_app <package> <pid> <uid>`.
  *
  * Trigger: `ActivityManager.addOnUidImportanceListener` (@SystemApi, API 26). Every
  * time a UID crosses the foreground importance cutpoint, ActivityManager calls us
- * back over binder and the focused task is re-resolved. The listener is an interface,
- * so a [Proxy] implements it without compile-time access to the hidden type.
+ * back over binder and the focused task is re-resolved. The listener is a hidden
+ * interface, implemented through [ListenerProxy].
  * A 1 s safety poll still covers focus changes that do not change any UID's
  * importance (e.g. moving focus between two visible split-screen apps).
  *
@@ -87,7 +84,7 @@ class ForegroundAppProvider : StateProvider {
         val listener = importanceListener ?: return
         try {
             ActivityManager::class.java
-                .getMethod("removeOnUidImportanceListener", listenerClass())
+                .getMethod("removeOnUidImportanceListener", Class.forName(IMPORTANCE_LISTENER))
                 .invoke(activityManager, listener)
         } catch (t: Throwable) {
             Log.w(name, "Failed to remove UID importance listener: ${t.message}")
@@ -128,26 +125,10 @@ class ForegroundAppProvider : StateProvider {
         out[Protocol.FOCUSED_APP] = value
     }
 
-    private fun listenerClass(): Class<*> = Class.forName("android.app.ActivityManager\$OnUidImportanceListener")
-
     private fun registerImportanceListener(): Boolean = try {
-        val listenerClass = listenerClass()
-        val handler = InvocationHandler { proxy, method: Method, args: Array<out Any?>? ->
-            when (method.name) {
-                "onUidImportance" -> {
-                    ctx.invalidate(this)
-                    null
-                }
-                "equals" -> proxy === args?.getOrNull(0)
-                "hashCode" -> System.identityHashCode(proxy)
-                "toString" -> "SynthesisCore.UidImportanceListener"
-                else -> null
-            }
-        }
-        val listener = Proxy.newProxyInstance(listenerClass.classLoader, arrayOf(listenerClass), handler)
-
+        val listener = ListenerProxy.create(IMPORTANCE_LISTENER, "onUidImportance") { ctx.invalidate(this) }
         ActivityManager::class.java
-            .getMethod("addOnUidImportanceListener", listenerClass, Int::class.javaPrimitiveType)
+            .getMethod("addOnUidImportanceListener", Class.forName(IMPORTANCE_LISTENER), Int::class.javaPrimitiveType)
             .invoke(activityManager, listener, ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND)
         importanceListener = listener
         true
@@ -161,5 +142,6 @@ class ForegroundAppProvider : StateProvider {
         const val NONE_APP = "none 0 0"
         const val PID_RETRY_MS = 50L
         const val PID_RETRY_LIMIT = 10
+        private const val IMPORTANCE_LISTENER = "android.app.ActivityManager\$OnUidImportanceListener"
     }
 }

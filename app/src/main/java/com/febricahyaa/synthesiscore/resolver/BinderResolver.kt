@@ -24,34 +24,54 @@ import java.io.PrintStream
 /**
  * `--resolve` mode: resolves binder transaction codes for native callers.
  *
- * Reads `Class::FIELD` lines and emits `Class::FIELD <code>` for every static int field
- * that could be resolved. Blank lines and `#` comments are ignored; failures are
+ * Reads `Class::FIELD` lines and emits `Class::FIELD <code>` for every `static final int`
+ * field that could be resolved. Blank lines and `#` comments are ignored; failures are
  * reported on [err] and omitted from the output.
+ *
+ * Input is untrusted: only well-formed Java identifiers are accepted, and the number
+ * and length of lines are capped, so the root process cannot be steered into loading
+ * arbitrary resources or reading an unbounded stream.
  */
 object BinderResolver {
     const val EXIT_OK = 0
     const val EXIT_PARTIAL = 1
     const val EXIT_IO_ERROR = 2
 
+    const val MAX_ENTRIES = 1024
+    const val MAX_LINE_LENGTH = 256
+
+    private val CLASS_NAME = Regex("[A-Za-z_$][\\w$]*(\\.[A-Za-z_$][\\w$]*)+")
+    private val FIELD_NAME = Regex("[A-Za-z_$][\\w$]*")
+
     data class Result(val output: String, val failures: Int)
 
-    /** Parses `Class::FIELD`, or returns null if the line is malformed. */
+    /** Parses `Class::FIELD`, or returns null unless both parts are valid identifiers. */
     fun parseEntry(line: String): Pair<String, String>? {
+        if (line.length > MAX_LINE_LENGTH) return null
         val parts = line.split("::")
-        if (parts.size != 2 || parts[0].isEmpty() || parts[1].isEmpty()) return null
-        return parts[0] to parts[1]
+        if (parts.size != 2) return null
+        val (className, fieldName) = parts
+        if (!CLASS_NAME.matches(className) || !FIELD_NAME.matches(fieldName)) return null
+        return className to fieldName
     }
 
     fun resolve(lines: Sequence<String>, err: PrintStream = System.err): Result {
         val output = StringBuilder()
         var failures = 0
+        var entries = 0
 
         lines.map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .take(MAX_ENTRIES + 1) // stop reading once the cap is exceeded
             .forEach { entry ->
+                if (++entries > MAX_ENTRIES) {
+                    err.println("ERROR: more than $MAX_ENTRIES entries, ignoring the rest")
+                    failures++
+                    return@forEach
+                }
                 val parsed = parseEntry(entry)
                 if (parsed == null) {
-                    err.println("ERROR: Invalid format '$entry'. Use Class::TRANSACTION_name")
+                    err.println("ERROR: Invalid entry '${entry.take(MAX_LINE_LENGTH)}'. Use fully.qualified.Class::FIELD_NAME")
                     failures++
                     return@forEach
                 }
