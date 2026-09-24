@@ -27,14 +27,19 @@ import android.os.IBinder
 import android.media.AudioManager
 import android.os.BatteryManager
 import android.os.PowerManager
+import android.os.SystemClock
 
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStreamReader
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
 import java.nio.file.StandardOpenOption
+import kotlin.system.exitProcess
 
 // @SuppressLint("StaticFieldLeak") is intentional, this runs as a CLI tool via app_process,
 // not inside an Android Activity lifecycle, so there is no real Context leak risk here.
@@ -43,11 +48,23 @@ import java.nio.file.StandardOpenOption
 object MainKt {
     private const val POLL_INTERVAL_MS = 500L
     private const val PID_RETRY_INTERVAL_MS = 50L
+    private const val MIN_SLEEP_MS = PID_RETRY_INTERVAL_MS
     private const val UNKNOWN_APP = "unknown 0 0"
     private const val NONE_APP = "none 0 0"
 
     // getThermalHeadroom() requires API 31+
     private const val THERMAL_API_MIN_SDK = 31
+
+    private const val RESOLVE_FLAG = "--resolve"
+    private const val TRANSACTION_PREFIX = "TRANSACTION_"
+
+    // Caps the number of distinct warnings kept for log de-duplication.
+    private const val MAX_LOGGED_WARNINGS = 64
+
+    private val GKI_KERNEL_REGEX = Regex("-android\\d+-")
+    private val PACKAGE_SANITIZE_REGEX = Regex("[^a-z0-9._-]")
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val PACKAGE_NAME_REGEX = Regex("[a-z0-9]+(\\.[a-z0-9]+)+")
 
     private val FOREGROUND_METHOD_CANDIDATES = listOf(
         "getFocusedRootTaskInfo",
@@ -84,6 +101,22 @@ object MainKt {
 
     private var bruteForceCandidates: List<Method>? = null
 
+    // TRANSACTION_* codes exposed by the ATM stub, keyed by method name.
+    // Empty when the stub fields could not be read; callers then skip filtering.
+    private var atmTransactionCodes: Map<String, Int> = emptyMap()
+
+    // Capabilities that never change during the process lifetime, resolved once at init.
+    private var thermalApiAvailable = 0
+    private var kernelIsGki = 0
+
+    // Last resolved foreground process, reused while it is still alive.
+    private var cachedProcessPkg: String? = null
+    private var cachedProcessName = ""
+    private var cachedPid = 0
+    private var cachedUid = 0
+
+    private val loggedWarnings = HashSet<String>()
+
     @Volatile
     private var lastStatus = ""
 
@@ -93,8 +126,14 @@ object MainKt {
     @JvmStatic
     fun main(args: Array<String>) {
         // Usage: app_process / com.febricahyaa.synthesiscore.MainKt <output_path> [lock_file_path]
+        //        app_process / com.febricahyaa.synthesiscore.MainKt --resolve [output_path]
+        if (args.firstOrNull() == RESOLVE_FLAG) {
+            exitProcess(runResolver(args.getOrNull(1)))
+        }
+
         if (args.isEmpty()) {
             System.err.println("Usage: <output_path> [lock_file_path]")
+            System.err.println("       $RESOLVE_FLAG [output_path] < Class::TRANSACTION_name lines")
             System.err.println("ERROR: output path is required.")
             return
         }
@@ -159,8 +198,12 @@ object MainKt {
     private fun runMonitorLoop() {
         while (!Thread.currentThread().isInterrupted) {
             try {
+                val startedAt = SystemClock.elapsedRealtime()
                 writeStatus()
-                Thread.sleep(POLL_INTERVAL_MS)
+                // waitForValidFocusedApp() may already have spent part of the interval,
+                // so only sleep for what remains to keep the cadence near POLL_INTERVAL_MS.
+                val elapsed = SystemClock.elapsedRealtime() - startedAt
+                Thread.sleep((POLL_INTERVAL_MS - elapsed).coerceAtLeast(MIN_SLEEP_MS))
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
                 break
@@ -196,7 +239,9 @@ object MainKt {
     private fun bypassHiddenApiRestrictions() {
         try {
             HiddenApiBypass.addHiddenApiExemptions("")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Catch Throwable: native failures (UnsatisfiedLinkError, NoSuchMethodError)
+            // are Errors and would otherwise crash the daemon before the watchdog can help.
             // Hidden API bypass failed — features relying on private APIs
             // (zen mode, ATM foreground detection) will degrade gracefully.
             System.err.println("WARN: HiddenApiBypass failed, some features may be unavailable: ${e.message}")
@@ -213,8 +258,10 @@ object MainKt {
             initActivityTaskManager()
             initNotificationManager()
             initThermalHeadroomMethod()
+            thermalApiAvailable = if (getThermalHeadroomMethod != null) 1 else 0
+            kernelIsGki = if (isGkiKernel()) 1 else 0
             true
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
             false
         }
@@ -223,9 +270,46 @@ object MainKt {
     private fun initActivityTaskManager() {
         val binder = getSystemService(resolveAtmServiceName())
             ?: error("ServiceManager returned null binder for '${resolveAtmServiceName()}'")
-        val atm = bindInterface("${resolveAtmInterfaceName()}\$Stub", binder)
+        val stubClassName = "${resolveAtmInterfaceName()}\$Stub"
+        val atm = bindInterface(stubClassName, binder)
         activityTaskManager = atm
+        atmTransactionCodes = readTransactionCodes(stubClassName)
         foregroundMethod = findForegroundMethod(atm)
+        logForegroundCapabilities()
+    }
+
+    /**
+     * Reads every static TRANSACTION_* field of [stubClassName] into a name -> code map.
+     *
+     * A method only has a TRANSACTION_* code when it is a real binder call served by
+     * system_server, so this is used to decide deterministically which ATM methods exist
+     * on this ROM instead of guessing from method names alone.
+     */
+    private fun readTransactionCodes(stubClassName: String): Map<String, Int> {
+        return try {
+            HiddenApiBypass.getStaticFields(Class.forName(stubClassName))
+                .filterIsInstance<Field>()
+                .filter { it.name.startsWith(TRANSACTION_PREFIX) && it.type == Int::class.javaPrimitiveType }
+                .associate { field ->
+                    field.isAccessible = true
+                    field.name.removePrefix(TRANSACTION_PREFIX) to field.getInt(null)
+                }
+        } catch (e: Throwable) {
+            System.err.println("WARN: Failed to read transaction codes from $stubClassName: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    private fun hasTransaction(methodName: String): Boolean =
+        atmTransactionCodes.isEmpty() || methodName in atmTransactionCodes
+
+    private fun logForegroundCapabilities() {
+        val available = FOREGROUND_METHOD_CANDIDATES.filter { it in atmTransactionCodes }
+        System.err.println(
+            "INFO: ATM transaction codes=${atmTransactionCodes.size}, " +
+                    "foreground candidates=$available, " +
+                    "selected=${foregroundMethod?.name ?: "none (brute force)"}"
+        )
     }
 
     private fun initNotificationManager() {
@@ -266,7 +350,7 @@ object MainKt {
     private fun isGkiKernel(): Boolean {
         return try {
             val kernelVersion = System.getProperty("os.version") ?: ""
-            kernelVersion.contains(Regex("-android\\d+-"))
+            kernelVersion.contains(GKI_KERNEL_REGEX)
         } catch (_: Exception) {
             false
         }
@@ -295,6 +379,7 @@ object MainKt {
         val methods = getDeclaredMethods(atm.javaClass).associateBy { it.name }
 
         return FOREGROUND_METHOD_CANDIDATES
+            .filter { hasTransaction(it) }
             .mapNotNull { candidate -> methods[candidate] }
             .find { method ->
                 method.parameterTypes.isEmpty() ||
@@ -306,42 +391,45 @@ object MainKt {
 
     private fun writeStatus() {
         // Resolve the focused app, retrying if the PID is not yet available.
-        // Returns null if the timeout elapsed without a valid PID, in that case we
-        // skip this update so that stale "0 0" data is never written to the output file.
+        // Returns null only if interrupted; after the retry timeout the app is still
+        // written with "0 0" as PID/UID (see waitForValidFocusedApp).
         val focusedApp = waitForValidFocusedApp() ?: return
 
         val currentStatus = buildStatus(focusedApp)
         if (currentStatus == lastStatus) return
 
         try {
-            val targetFile = File(outputPath)
-            targetFile.parentFile?.mkdirs()
-
-            // Write atomically: write to a .tmp sibling then rename.
-            // This prevents the C++ daemon from reading a partial file if we are
-            // interrupted mid-write (e.g. OOM-killed or process restart).
-            // inotify IN_CLOSE_WRITE fires on the rename target once the kernel
-            // has moved the file into place, so the watcher is correctly triggered.
-            val tmpFile = File("$outputPath.tmp")
-            FileOutputStream(tmpFile).use { fos ->
-                fos.write(currentStatus.toByteArray(Charsets.UTF_8))
-                fos.fd.sync()
-            }
-
-            if (!tmpFile.renameTo(targetFile)) {
-                // renameTo can fail across filesystems (shouldn't happen here, but be safe).
-                // Fall back to direct overwrite so the C++ side isn't starved of updates.
-                System.err.println("WARN: atomic rename failed for $outputPath, falling back to direct write")
-                FileOutputStream(targetFile).use { fos ->
-                    fos.write(currentStatus.toByteArray(Charsets.UTF_8))
-                    fos.fd.sync()
-                }
-            }
-
+            writeFileAtomically(outputPath, currentStatus)
             lastStatus = currentStatus
         } catch (e: Exception) {
             System.err.println("ERROR: writeStatus failed: ${e.message}")
             e.printStackTrace()
+        }
+    }
+
+    private fun writeFileAtomically(path: String, content: String) {
+        val targetFile = File(path)
+        targetFile.parentFile?.mkdirs()
+
+        // Write atomically: write to a .tmp sibling then rename.
+        // This prevents the C++ daemon from reading a partial file if we are
+        // interrupted mid-write (e.g. OOM-killed or process restart).
+        // inotify IN_CLOSE_WRITE fires on the rename target once the kernel
+        // has moved the file into place, so the watcher is correctly triggered.
+        val tmpFile = File("$path.tmp")
+        FileOutputStream(tmpFile).use { fos ->
+            fos.write(content.toByteArray(Charsets.UTF_8))
+            fos.fd.sync()
+        }
+
+        if (!tmpFile.renameTo(targetFile)) {
+            // renameTo can fail across filesystems (shouldn't happen here, but be safe).
+            // Fall back to direct overwrite so the C++ side isn't starved of updates.
+            System.err.println("WARN: atomic rename failed for $path, falling back to direct write")
+            FileOutputStream(targetFile).use { fos ->
+                fos.write(content.toByteArray(Charsets.UTF_8))
+                fos.fd.sync()
+            }
         }
     }
 
@@ -373,7 +461,7 @@ object MainKt {
         }
 
         // Timed out, write the app with 0 0 as PID/UID anyway.
-        System.err.println("WARN: PID still unresolved after ${POLL_INTERVAL_MS}ms for '$focusedApp'.")
+        logOnce("pid_unresolved:$focusedApp", "WARN: PID still unresolved after ${POLL_INTERVAL_MS}ms for '$focusedApp'.")
         return focusedApp
     }
 
@@ -391,8 +479,6 @@ object MainKt {
         val chargingState = getChargingState()
         val thermalStatus = getThermalStatus()
         val audioActive = if (isAudioActive()) 1 else 0
-        val thermalApiAvailable = if (getThermalHeadroomMethod != null) 1 else 0
-        val kernelIsGki = if (isGkiKernel()) 1 else 0
 
         return buildString {
             appendLine("focused_app $focusedApp")
@@ -479,8 +565,11 @@ object MainKt {
             } else {
                 resolveAppInfoFromObject(result)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (e: Throwable) {
+            logOnce(
+                "focused_app:${e.javaClass.name}:${e.message}",
+                "WARN: getFocusedAppInfo failed (further identical errors suppressed)", e
+            )
             UNKNOWN_APP
         }
     }
@@ -499,7 +588,7 @@ object MainKt {
     }
 
     private fun invokeForegroundMethod(): Any? {
-        val method = foregroundMethod ?: return null
+        val method = foregroundMethod ?: return bruteForceForegroundMethod()
         return tryInvokeForegroundMethod(method) ?: bruteForceForegroundMethod()
     }
 
@@ -536,14 +625,24 @@ object MainKt {
         return null
     }
 
+    /**
+     * Last-resort foreground lookup when no known candidate method works.
+     *
+     * Only read-only getters ("get*") that are real binder calls (have a TRANSACTION_* code)
+     * are tried, in a stable order. Without this restriction, methods such as removeTask(int)
+     * or startSystemLockTaskMode(int) would match the name filter and could be invoked.
+     */
     private fun bruteForceForegroundMethod(): Any? {
         return try {
             val candidates =
                 bruteForceCandidates ?: getDeclaredMethods(activityTaskManager!!.javaClass)
                     .filter {
                         val name = it.name.lowercase()
-                        name.contains("focus") || name.contains("top") || name.contains("task")
+                        name.startsWith("get") &&
+                                (name.contains("focus") || name.contains("top") || name.contains("task")) &&
+                                hasTransaction(it.name)
                     }
+                    .sortedWith(compareBy<Method>({ it.name }, { it.parameterTypes.size }))
                     .onEach { it.isAccessible = true }
                     .also { bruteForceCandidates = it }
 
@@ -558,7 +657,7 @@ object MainKt {
                     else -> null
                 }
             }
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             null
         }
     }
@@ -631,9 +730,9 @@ object MainKt {
 
     private fun extractPackageName(input: String?): String? {
         if (input == null || input.indexOf('.') <= 0) return null
-        val normalized = input.lowercase().replace(Regex("[^a-z0-9._-]"), " ")
-        return normalized.split(Regex("\\s+")).find {
-            it.contains(".") && it.matches(Regex("[a-z0-9]+(\\.[a-z0-9]+)+"))
+        val normalized = input.lowercase().replace(PACKAGE_SANITIZE_REGEX, " ")
+        return normalized.split(WHITESPACE_REGEX).find {
+            it.contains(".") && it.matches(PACKAGE_NAME_REGEX)
         }
     }
 
@@ -642,16 +741,59 @@ object MainKt {
         return "$pkg $pidUid"
     }
 
+    /**
+     * Returns "<pid> <uid>" for [pkg].
+     *
+     * The last resolved process is reused while it is still alive, so the expensive
+     * getRunningAppProcesses() binder call only happens when the foreground app changes
+     * or its process dies.
+     */
     private fun getPidUid(pkg: String): String {
+        if (pkg == cachedProcessPkg && isProcessAlive(cachedPid, cachedProcessName)) {
+            return "$cachedPid $cachedUid"
+        }
+        cachedProcessPkg = null
+
         return try {
-            activityManager?.runningAppProcesses
+            val process = activityManager?.runningAppProcesses
                 ?.find { it.processName == pkg || it.pkgList?.contains(pkg) == true }
-                ?.let { "${it.pid} ${it.uid}" }
-                ?: "0 0"
+                ?: return "0 0"
+            if (process.pid > 0) {
+                cachedProcessPkg = pkg
+                cachedProcessName = process.processName
+                cachedPid = process.pid
+                cachedUid = process.uid
+            }
+            "${process.pid} ${process.uid}"
         } catch (e: Exception) {
-            System.err.println("WARN: getPidUid failed for '$pkg': ${e.message}")
+            logOnce("pid_uid:${e.javaClass.name}", "WARN: getPidUid failed for '$pkg': ${e.message}")
             "0 0"
         }
+    }
+
+    /**
+     * Returns true if [pid] is still running as [processName].
+     * Comparing /proc/<pid>/cmdline guards against the PID being reused by another process.
+     */
+    private fun isProcessAlive(pid: Int, processName: String): Boolean {
+        if (pid <= 0) return false
+        return try {
+            val cmdline = File("/proc/$pid/cmdline").readBytes()
+            val end = cmdline.indexOf(0.toByte()).let { if (it < 0) cmdline.size else it }
+            String(cmdline, 0, end, Charsets.UTF_8) == processName
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Logs [message] only the first time [key] is seen, so an error that repeats on
+     * every poll does not flood the log. At most [MAX_LOGGED_WARNINGS] keys are tracked.
+     */
+    private fun logOnce(key: String, message: String, t: Throwable? = null) {
+        if (loggedWarnings.size >= MAX_LOGGED_WARNINGS || !loggedWarnings.add(key)) return
+        System.err.println(message)
+        t?.printStackTrace()
     }
 
     private fun getDeclaredMethods(cls: Class<*>): List<Method> {
@@ -660,5 +802,83 @@ object MainKt {
 
     private fun getInstanceFields(cls: Class<*>): List<Field> {
         return HiddenApiBypass.getInstanceFields(cls).filterIsInstance<Field>()
+    }
+
+    /**
+     * One-shot resolver mode: reads `Class::TRANSACTION_name` lines from stdin and
+     * prints `Class::TRANSACTION_name <code>` for each field that could be resolved.
+     *
+     * Native code can use the resolved codes to issue binder transactions directly,
+     * since the codes differ between Android versions and ROMs. Blank lines and lines
+     * starting with '#' are ignored. Unresolved entries are reported on stderr and
+     * omitted from the output.
+     *
+     * @param outputPath File to write atomically, or null to print to stdout.
+     * @return 0 if every entry resolved, 1 if any entry failed, 2 if the output could not be written.
+     */
+    private fun runResolver(outputPath: String?): Int {
+        bypassHiddenApiRestrictions()
+
+        val output = StringBuilder()
+        var failures = 0
+
+        BufferedReader(InputStreamReader(System.`in`)).useLines { lines ->
+            lines.map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") }
+                .forEach { entry ->
+                    val parts = entry.split("::")
+                    if (parts.size != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
+                        System.err.println("ERROR: Invalid format '$entry'. Use Class::TRANSACTION_name")
+                        failures++
+                        return@forEach
+                    }
+                    try {
+                        val code = resolveStaticIntField(parts[0], parts[1])
+                        output.append(entry).append(' ').append(code).append('\n')
+                    } catch (t: Throwable) {
+                        System.err.println("ERROR: Failed to resolve $entry -> ${t.javaClass.simpleName}: ${t.message}")
+                        failures++
+                    }
+                }
+        }
+
+        try {
+            if (outputPath == null) {
+                print(output)
+                System.out.flush()
+            } else {
+                writeFileAtomically(outputPath, output.toString())
+            }
+        } catch (e: Exception) {
+            System.err.println("ERROR: Failed to write resolver output: ${e.message}")
+            return 2
+        }
+
+        return if (failures == 0) 0 else 1
+    }
+
+    private fun resolveStaticIntField(className: String, fieldName: String): Int {
+        val field = resolveClass(className).getDeclaredField(fieldName)
+        require(Modifier.isStatic(field.modifiers)) { "$fieldName is not static" }
+        field.isAccessible = true
+        return field.getInt(null)
+    }
+
+    /**
+     * Loads [className], accepting dotted notation for nested classes
+     * (e.g. "android.os.IPowerManager.Stub" -> "android.os.IPowerManager$Stub").
+     * Trailing dots are converted to '$' one at a time until a class is found.
+     */
+    private fun resolveClass(className: String): Class<*> {
+        var candidate = className
+        while (true) {
+            try {
+                return Class.forName(candidate)
+            } catch (e: ClassNotFoundException) {
+                val lastDot = candidate.lastIndexOf('.')
+                if (lastDot <= 0) throw ClassNotFoundException(className)
+                candidate = candidate.substring(0, lastDot) + '$' + candidate.substring(lastDot + 1)
+            }
+        }
     }
 }

@@ -47,6 +47,8 @@ zen_mode 0
 charging_state 1
 thermal_status 0.85
 audio_active 1
+thermal_api_available 1
+kernel_is_gki 1
 ```
 
 ### Field Reference
@@ -60,6 +62,8 @@ audio_active 1
 | `charging_state` | `0\|1` | `1` = device is charging (AC / USB / wireless) |
 | `thermal_status` | `0.00–1.00` | Thermal headroom — `1.0` = cool, `0.0` = throttling. `-1.00` on API < 31 |
 | `audio_active` | `0\|1` | `1` = music/game audio stream is active |
+| `thermal_api_available` | `0\|1` | `1` = `getThermalHeadroom()` was resolved at startup (API 31+) |
+| `kernel_is_gki` | `0\|1` | `1` = kernel reports GKI (`-androidXX-` in `uname -r`) |
 
 ---
 
@@ -75,6 +79,29 @@ app_process -Djava.class.path=/sdcard/app-release.apk / \
 
 The optional second argument is a lock-file path. If provided, SynthesisCore will acquire an exclusive `FileLock` on startup — any attempt to run a second instance against the same lock will exit immediately with an error.
 
+### Binder transaction resolver (`--resolve`)
+
+Binder transaction codes differ between Android versions and ROMs. The `--resolve` mode is a one-shot
+lookup that lets native code (e.g. Flux) issue binder calls directly without keeping a JVM alive:
+
+```shell
+app_process -Djava.class.path=/sdcard/app-release.apk / \
+  com.febricahyaa.synthesiscore.MainKt --resolve [/path/to/output/file] <<EOF
+android.os.IPowerManager.Stub::TRANSACTION_isInteractive
+android.app.INotificationManager.Stub::TRANSACTION_getZenMode
+EOF
+```
+
+```text
+android.os.IPowerManager.Stub::TRANSACTION_isInteractive 21
+android.app.INotificationManager.Stub::TRANSACTION_getZenMode 123
+```
+
+- Input is one `Class::FIELD` per line; nested classes may use `.` or `$` (`IPowerManager.Stub` = `IPowerManager$Stub`). Blank lines and `#` comments are ignored.
+- Output goes to stdout, or is written atomically to the given file.
+- Entries that cannot be resolved are reported on stderr and omitted from the output.
+- Exit code: `0` all resolved, `1` some entries failed, `2` output could not be written.
+
 ---
 
 ## Commit Roadmap
@@ -84,7 +111,7 @@ Development is structured as discrete, reviewable commits. Each commit introduce
 ### ✅ v1.0.0 — Initial Release
 Core infrastructure: `focused_app`, `screen_awake`, `battery_saver`, `zen_mode`.
 
-### 🔜 Planned — Field Expansion
+### ✅ Field Expansion
 
 **Commit 1 — `feat: add charging_state field`**
 - Integrates `BatteryManager.isCharging()`
@@ -113,7 +140,9 @@ Core infrastructure: `focused_app`, `screen_awake`, `battery_saver`, `zen_mode`.
 The diagram at the top of this page shows the full data flow. In short:
 
 1. `MainKt` bootstraps an Android system context via `app_process`
-2. A monitor loop runs every 500 ms, reading from five Android system services
+2. A monitor loop runs every 500 ms, reading from five Android system services. The foreground
+   method is chosen from the `TRANSACTION_*` codes the ROM actually exposes, and the foreground
+   PID is cached while its process stays alive
 3. `buildStatus()` assembles all fields into a key-value string
 4. `writeStatus()` compares against the last-written snapshot — writes only on change, then `fsync`s
 5. An upstream daemon (e.g. Flux) watches the output file with `inotify` and reacts within milliseconds
