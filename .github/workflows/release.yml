@@ -223,8 +223,7 @@ jobs:
           TG_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           TG_DEV_ID: ${{ secrets.TELEGRAM_DEV_ID }}
           JOB_STATUS: ${{ job.status }}
+          PRERELEASE: ${{ github.event_name == 'release' && github.event.release.prerelease || inputs.prerelease }}
         run: |
-          [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHANNEL_ID" ]] || { echo "Telegram secrets not set, skipping"; exit 0; }
-          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
-          [[ "$JOB_STATUS" == "success" ]] || url=""
-          bash .github/scripts/notify_telegram.sh build "$JOB_STATUS" "$url"
+          export APK_PATH="dist/$APK_NAME" NOTES_FILE="$RUNNER_TEMP/generated.md"
+          bash .github/scripts/notify_telegram.sh release "$JOB_STATUS"
