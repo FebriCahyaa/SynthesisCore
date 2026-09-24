@@ -247,7 +247,8 @@ gh attestation verify SynthesisCore-v2.1.0.apk --repo FebriCahyaa/SynthesisCore
 ```
 
 Release secrets: `KEYSTORE_BASE64`, `SIGNING_KEY_ALIAS`, `SIGNING_KEY_PASSWORD`,
-`SIGNING_STORE_PASSWORD`; optional `FLUX_DISPATCH_TOKEN` and the Telegram secrets.
+`SIGNING_STORE_PASSWORD`; optional `FLUX_DISPATCH_TOKEN` (fine-grained token, repository
+access *Only FebriCahyaa/Flux*, permission *Contents: Read and write*) and the Telegram secrets.
 
 ## Building
 

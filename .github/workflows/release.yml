@@ -204,6 +204,9 @@ jobs:
 
       - name: Notify Flux
         # Secrets cannot be tested in `if:`, so the step checks and skips itself.
+        # Non-fatal: an expired token must not fail a published release; Flux's
+        # daily sync picks the release up anyway.
+        continue-on-error: true
         env:
           FLUX_DISPATCH_TOKEN: ${{ secrets.FLUX_DISPATCH_TOKEN }}
           FLUX_REPOSITORY: ${{ vars.FLUX_REPOSITORY || 'FebriCahyaa/Flux' }}
