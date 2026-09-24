@@ -136,7 +136,7 @@ jobs:
       - name: Build provenance attestation
         # Sigstore-signed statement that this APK was built by this workflow from
         # this commit. Verify with: gh attestation verify <apk> --repo <owner>/SynthesisCore
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         continue-on-error: true # unavailable for private repositories on some plans
         with:
           subject-path: dist/${{ env.APK_NAME }}
