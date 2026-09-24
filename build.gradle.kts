@@ -6,7 +6,7 @@ buildscript {
         // transitive tools). None of these ship in the APK, but they run during the
         // build and are reported by the dependency graph / Dependabot. Constraints
         // only raise versions; drop an entry once AGP itself requires a newer one.
-        classpath(platform("io.netty:netty-bom:4.1.138.Final")) // HTTP/2 reset flood, request smuggling, SslHandler DoS
+        classpath(platform("io.netty:netty-bom:4.2.18.Final")) // HTTP/2 reset flood, request smuggling, SslHandler DoS
         constraints {
             classpath("org.bitbucket.b_c:jose4j:0.9.7") { because("CVE-2024-29371: DoS via compressed JWE") }
             classpath("org.apache.httpcomponents:httpclient:4.5.14") { because("CVE-2020-13956: URI authority parsing") }
