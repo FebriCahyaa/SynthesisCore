@@ -114,8 +114,11 @@ jobs:
             "$RUNNER_TEMP/aligned.apk"
 
           "$build_tools/apksigner" verify --verbose --print-certs "dist/$APK_NAME" | tee "$RUNNER_TEMP/verify.txt"
-          cert=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/verify.txt" | head -1)
-          [[ -n "$cert" ]] || { echo "::error::Could not read the signing certificate digest"; exit 1; }
+          # apksigner prints "Signer #1 certificate SHA-256 digest: ..." or, for v3-only
+          # APKs in verbose mode (build-tools 37), "V3.0 Signer: certificate SHA-256 digest: ...".
+          certs=$(sed -nE 's/^.*[Ss]igner.*certificate SHA-256 digest: ([0-9a-f]{64})$/\1/p' "$RUNNER_TEMP/verify.txt" | sort -u)
+          [[ $(grep -c . <<<"$certs") -eq 1 ]] || { echo "::error::Expected exactly one signing certificate, got: ${certs:-none}"; exit 1; }
+          cert="$certs"
           echo "CERT_SHA256=$cert" >>"$GITHUB_ENV"
 
       - name: Remove keystore
