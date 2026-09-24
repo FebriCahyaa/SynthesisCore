@@ -16,8 +16,6 @@ updates:
     commit-message:
       prefix: "deps"
       include: "scope"
-    reviewers:
-      - "febricahyaa"
     assignees:
       - "febricahyaa"
 
@@ -36,7 +34,5 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
-    reviewers:
-      - "febricahyaa"
     assignees:
       - "febricahyaa"
