@@ -122,8 +122,12 @@ class ThermalProvider : StateProvider {
         private const val HEADROOM_LISTENER = "android.os.PowerManager\$OnThermalHeadroomChangedListener"
         const val UNSUPPORTED = "-1.00"
 
-        /** Clamps to [0, 1]; NaN (no HAL support) becomes [UNSUPPORTED]. */
+        /**
+         * Headroom left, 1.00 = cool. getThermalHeadroom() grows with heat (1.0 = SEVERE
+         * throttling, above 1.0 past it), so it is inverted after clamping to [0, 1];
+         * NaN (no HAL support) becomes [UNSUPPORTED].
+         */
         fun formatHeadroom(headroom: Float): String =
-            if (headroom.isNaN()) UNSUPPORTED else Protocol.decimal(headroom.coerceIn(0f, 1f), 2)
+            if (headroom.isNaN()) UNSUPPORTED else Protocol.decimal(1f - headroom.coerceIn(0f, 1f), 2)
     }
 }

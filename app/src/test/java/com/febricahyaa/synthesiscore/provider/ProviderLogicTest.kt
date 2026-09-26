@@ -39,9 +39,10 @@ class ProviderLogicTest {
 
     @Test
     fun headroom_isClampedAndNaNIsUnsupported() {
-        assertEquals("0.85", ThermalProvider.formatHeadroom(0.854f))
-        assertEquals("1.00", ThermalProvider.formatHeadroom(1.7f))
-        assertEquals("0.00", ThermalProvider.formatHeadroom(-0.2f))
+        // Android reports load toward SEVERE (1.0); the protocol carries headroom left.
+        assertEquals("0.15", ThermalProvider.formatHeadroom(0.85f))
+        assertEquals("0.00", ThermalProvider.formatHeadroom(1.7f))
+        assertEquals("1.00", ThermalProvider.formatHeadroom(-0.2f))
         assertEquals(ThermalProvider.UNSUPPORTED, ThermalProvider.formatHeadroom(Float.NaN))
     }
 
