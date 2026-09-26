@@ -53,7 +53,7 @@ jobs:
           echo "APK_NAME=SynthesisCore-${TAG}.apk" >>"$GITHUB_ENV"
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # The release tag, or the dispatched commit for a new release
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
@@ -68,7 +68,7 @@ jobs:
           fi
 
       - name: Setup JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -136,7 +136,7 @@ jobs:
       - name: Build provenance attestation
         # Sigstore-signed statement that this APK was built by this workflow from
         # this commit. Verify with: gh attestation verify <apk> --repo <owner>/SynthesisCore
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         continue-on-error: true # unavailable for private repositories on some plans
         with:
           subject-path: dist/${{ env.APK_NAME }}
