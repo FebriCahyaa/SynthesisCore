@@ -1,0 +1,99 @@
+{
+  "schema_version": 4,
+  "owner": "SynthesisCore",
+  "description": "Canonical capability model shared by SynthesisCore providers and Flux native collectors. SynthesisCore owns this file; Flux vendors a byte-identical copy at jni/gfx/capability_schema_v4.json. Any contributor (Kotlin provider, fluxd collector) normalises its observations into these domains and keys. Collectors report observable facts only; interpretation and policy live above this layer.",
+  "conventions": {
+    "absent_means": "unsupported or not observed on this device",
+    "additive_only": "keys and domains may be added within a schema version; removing or repurposing a key requires a schema_version bump and a migration note",
+    "value_types": ["bool", "int", "double", "string", "string_list"],
+    "provenance": "each domain records the source id that populated it; a per-key override map handles domains merged from several sources"
+  },
+  "source_status": ["ok", "partial", "unavailable", "error"],
+  "domains": {
+    "vulkan": {
+      "description": "Facts read from the Vulkan loader and the first physical device. Collected natively by fluxd.",
+      "keys": {
+        "available": "bool",
+        "status": "string",
+        "detail": "string",
+        "loader_present": "bool",
+        "instance_version": "string",
+        "api_version": "string",
+        "api_version_major": "int",
+        "api_version_minor": "int",
+        "api_version_patch": "int",
+        "driver_version_raw": "int",
+        "device_count": "int",
+        "device_name": "string",
+        "device_type": "string",
+        "vendor_id": "int",
+        "device_id": "int",
+        "instance_extensions": "string_list",
+        "device_extensions": "string_list",
+        "features_supported": "string_list"
+      }
+    },
+    "gpu": {
+      "description": "Normalised GPU identity. Derived from Vulkan facts where available, corroborated by sysfs presence checks.",
+      "keys": {
+        "vendor": "string",
+        "family": "string",
+        "model": "string",
+        "vendor_id": "int",
+        "device_id": "int",
+        "driver_version": "string",
+        "kgsl_present": "bool",
+        "devfreq_present": "bool"
+      }
+    },
+    "display": {
+      "description": "Primary display mode and colour capabilities. Best collected by a framework provider in SynthesisCore.",
+      "keys": {
+        "width_px": "int",
+        "height_px": "int",
+        "density_dpi": "int",
+        "refresh_rate_hz": "double",
+        "min_refresh_rate_hz": "double",
+        "peak_refresh_rate_hz": "double",
+        "supported_modes": "string_list",
+        "hdr_types": "string_list",
+        "wide_color_gamut": "bool"
+      }
+    },
+    "hwc": {
+      "description": "Hardware composer presence and interface generation. Presence is observable natively; version detail is best read through the framework.",
+      "keys": {
+        "service_present": "bool",
+        "interface": "string",
+        "composer_version": "string",
+        "vsync_period_ns": "int"
+      }
+    },
+    "renderengine": {
+      "description": "Observed RenderEngine and HWUI backend selection. Facts as currently configured; this layer never sets them.",
+      "keys": {
+        "backend": "string",
+        "hwui_renderer": "string",
+        "gpu_composition": "bool"
+      }
+    },
+    "runtime": {
+      "description": "Platform and kernel facts that gate what the graphics stack may attempt.",
+      "keys": {
+        "android_sdk": "int",
+        "kernel_is_gki": "bool",
+        "soc_model": "string",
+        "soc_manufacturer": "string",
+        "abi": "string",
+        "page_size": "int"
+      }
+    }
+  },
+  "enums": {
+    "gpu.vendor": ["qualcomm", "arm", "imagination", "nvidia", "amd", "intel", "broadcom", "vivante", "unknown"],
+    "gpu.family": ["adreno", "mali", "powervr", "geforce", "radeon", "intel", "videocore", "vivante", "unknown"],
+    "vulkan.device_type": ["other", "integrated", "discrete", "virtual", "cpu", "unknown"],
+    "vulkan.status": ["ok", "absent", "no_device", "error"],
+    "hwc.interface": ["hidl", "aidl", "unknown"]
+  }
+}

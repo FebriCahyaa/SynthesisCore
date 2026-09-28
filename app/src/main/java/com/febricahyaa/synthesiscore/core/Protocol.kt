@@ -32,8 +32,15 @@ object Protocol {
      * 2 = synthesis_version field, --resolve mode
      * 3 = thermal_level, battery_level, battery_temp, call_active; --once and
      *     --capabilities modes; numbers always use '.' as decimal separator
+     * 4 = capability_schema and capability_file, announcing the canonical
+     *     capability model (CapabilitySchema); --capability-model mode
+     *
+     * 4 is additive: every key from 1-3 keeps its name, meaning, position and
+     * format, so a consumer built against 3 reads a 4 file correctly and simply
+     * ignores the two new keys. Flux's native reader is tested against exactly
+     * that case in tests/synthesis_core_test.cpp.
      */
-    const val VERSION = 3
+    const val VERSION = 4
 
     const val SYNTHESIS_VERSION = "synthesis_version"
     const val FOCUSED_APP = "focused_app"
@@ -49,6 +56,13 @@ object Protocol {
     const val BATTERY_LEVEL = "battery_level"
     const val BATTERY_TEMP = "battery_temp"
     const val CALL_ACTIVE = "call_active"
+
+    // Protocol 4. Announce the canonical capability model without carrying it:
+    // capabilities are nested data that does not fit one key per line, and they
+    // change on a different timescale from the per-tick state in this file.
+    // Consumers that want them read CAPABILITY_FILE.
+    const val CAPABILITY_SCHEMA = "capability_schema"
+    const val CAPABILITY_FILE = "capability_file"
 
     /** Output order. Fields from protocol 1 keep their original order for older parsers. */
     val FIELD_ORDER = listOf(
@@ -66,6 +80,9 @@ object Protocol {
         BATTERY_LEVEL,
         BATTERY_TEMP,
         CALL_ACTIVE,
+        // Protocol 4 keys are appended, so every earlier key keeps its position.
+        CAPABILITY_SCHEMA,
+        CAPABILITY_FILE,
     )
 
     private val ORDER_INDEX = FIELD_ORDER.withIndex().associate { it.value to it.index }
