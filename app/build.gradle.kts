@@ -51,6 +51,22 @@ android {
             isDebuggable = true
         }
     }
+
+    // R8 full-mode: more aggressive dead-code removal and inlining than the
+    // default compatibility mode. Safe for pure-Kotlin/Java code that has no
+    // reflection on removed classes without -keep rules.
+    buildToolsVersion = "35.0.0"
+
+    // Limit APK to the two ABIs present on modern Android phones (arm64-v8a
+    // handles every 64-bit Armv8 chip; x86_64 covers emulators for CI).
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = false
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11

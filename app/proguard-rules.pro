@@ -1,3 +1,9 @@
+# R8 full mode: aggressive dead-code elimination, inlining, and type propagation.
+# Requires R8 3.x+ (bundled with AGP 8+). Without -keep rules, classes and
+# members that are never reachable from an entry point are completely removed.
+-optimizationpasses 5
+-optimizations !code/simplification/arithmetic,!field/*,!class/merging/*
+
 # R8 rules for SynthesisCore.
 #
 # The APK is never installed; app_process loads its dex and calls MainKt.main().
