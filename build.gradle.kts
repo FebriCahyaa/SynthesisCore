@@ -11,7 +11,7 @@ buildscript {
             classpath("org.bitbucket.b_c:jose4j:0.9.7") { because("CVE-2024-29371: DoS via compressed JWE") }
             classpath("org.apache.httpcomponents:httpclient:4.5.14") { because("CVE-2020-13956: URI authority parsing") }
             classpath("org.apache.httpcomponents:httpmime:4.5.14") { because("aligned with httpclient 4.5.14") }
-            classpath("org.apache.commons:commons-lang3:3.20.0") { because("CVE-2025-48924: ClassUtils recursion") }
+            classpath("org.apache.commons:commons-lang3:3.21.0") { because("CVE-2025-48924: ClassUtils recursion") }
             classpath("org.jdom:jdom2:2.0.6.1") { because("CVE-2021-33813: XXE in SAXBuilder") }
         }
     }
