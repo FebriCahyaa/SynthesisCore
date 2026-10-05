@@ -39,6 +39,9 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
 
+      - name: Brand migration checks
+        run: sh tests/brand_migration_test.sh .
+
       - name: Build release APK (unsigned)
         run: ./gradlew assembleRelease
 

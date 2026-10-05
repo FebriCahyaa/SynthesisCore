@@ -1,0 +1,19 @@
+# Phase 4.5C classification of remaining SynthesisCore / synthesiscore / "Synthesis Core" occurrences.
+# path_prefix<TAB>class<TAB>reason. Longest matching prefix wins. Checked by tests/brand_migration_test.sh.
+# Classes: technical compatibility | package identity | historical documentation | legal attribution | test fixture | migration documentation | generated artifact | build/module identifier | intentional legacy reference
+.github/ISSUE_TEMPLATE/config.yml	technical compatibility	discussions URL of the FebriCahyaa/SynthesisCore repository (not renamed)
+.github/ISSUE_TEMPLATE/	technical compatibility	form field id synthesiscore_version and run instructions; public descriptions rebranded
+.github/labels.yml	intentional legacy reference	repository label file header (repository not renamed)
+.github/scripts/	technical compatibility	CI notification project name, repository slug, Protocol.kt path (unrelated CI, unchanged)
+.github/workflows/release.yml	technical compatibility	APK asset name SynthesisCore-<tag>.apk, synthesiscore:auto marker, synthesiscore-release dispatch event, attestation repo; release title rebranded
+.github/workflows/	technical compatibility	CI artifact names and contributor message (unrelated CI, unchanged)
+README.md	technical compatibility	protocol reference: package, entry point, asset names and output contract named exactly; identity section maps the public name
+app/build.gradle.kts	package identity	namespace and applicationId com.febricahyaa.synthesiscore
+app/proguard-rules.pro	package identity	R8 keep rule for com.febricahyaa.synthesiscore.MainKt
+app/src/main/java/com/febricahyaa/synthesiscore/	package identity	Kotlin package declarations and imports; runtime toString/comment text unchanged
+app/src/test/	test fixture	tests in the com.febricahyaa.synthesiscore package
+docs/architecture/ZAIRENKAI_INTELLIGENCE_BRAND_MIGRATION.md	migration documentation	this migration
+docs/architecture/synthesiscore_identifiers.tsv	migration documentation	this registry
+docs/	historical documentation	repository data inventory and deletion manifest
+settings.gradle.kts	build/module identifier	rootProject.name "Synthesis Core" (Gradle project identity)
+tests/brand_migration_test.sh	migration documentation	this migration's checks

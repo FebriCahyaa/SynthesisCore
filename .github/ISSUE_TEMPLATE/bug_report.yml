@@ -1,5 +1,5 @@
 name: 🐛 Bug Report
-description: Report a bug or unexpected behavior in SynthesisCore
+description: Report a bug or unexpected behavior in Zairenkai Intelligence (SynthesisCore)
 title: "[Bug]: "
 labels: ["bug"]
 assignees:
@@ -74,7 +74,7 @@ body:
   - type: input
     id: synthesiscore_version
     attributes:
-      label: SynthesisCore Version / Commit
+      label: Zairenkai Intelligence (SynthesisCore) Version / Commit
       placeholder: "e.g. v1.0.0 or commit SHA"
     validations:
       required: true

@@ -178,7 +178,7 @@ jobs:
           [[ "$PRERELEASE" == "true" ]] && flags+=(--prerelease)
           gh release create "$TAG" dist/* \
             --target "$GITHUB_SHA" \
-            --title "SynthesisCore $TAG" \
+            --title "Zairenkai Intelligence $TAG" \
             --notes-file "$RUNNER_TEMP/generated.md" \
             "${flags[@]}"
 

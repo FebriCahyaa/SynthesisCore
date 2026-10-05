@@ -1,4 +1,4 @@
-# SynthesisCore
+# Zairenkai Intelligence
 
 <p align="center">
   <b>Event-driven Android system monitor for root daemons — a modern replacement for <code>dumpsys</code></b><br/>
@@ -12,6 +12,7 @@
   <img src="https://img.shields.io/badge/Used%20By-Flux%20Tweaks-6C63FF"/>
 </p>
 
+- [Identity and compatibility names](#identity-and-compatibility-names)
 - [What is SynthesisCore?](#what-is-synthesiscore)
 - [Output format](#output-format)
 - [Usage](#usage)
@@ -23,6 +24,18 @@
 - [License](#license)
 
 ---
+
+## Identity and compatibility names
+
+**Zairenkai Intelligence** is the public name of this component, the system-observation layer of
+the Zairenkai platform (with Synrei Thermal Intelligence for thermal). **SynthesisCore** is its
+technical backend identity and stays unchanged wherever something depends on it:
+- the package `com.febricahyaa.synthesiscore` and the `app_process` entry `com.febricahyaa.synthesiscore.MainKt`;
+- the release asset names `SynthesisCore-v<ver>.apk` (`.sha256`, `.cert.sha256`) and the signing certificate pinned by Zairenkai;
+- the output format `synthesis_version 3`, its field names, and the `synthesiscore-release` dispatch event.
+
+A legacy identifier does not mean that the implementation is obsolete. The rest of this document
+uses the technical name. See `docs/architecture/ZAIRENKAI_INTELLIGENCE_BRAND_MIGRATION.md`.
 
 ## What is SynthesisCore?
 

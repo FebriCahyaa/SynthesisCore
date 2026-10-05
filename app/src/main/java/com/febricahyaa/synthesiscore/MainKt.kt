@@ -173,6 +173,7 @@ object MainKt {
     private fun printUsage() {
         System.err.println(
             """
+            Zairenkai Intelligence (SynthesisCore backend)
             Usage: MainKt <output_path> [lock_file_path]   run the monitor daemon
                    MainKt --resolve [output_path]          resolve Class::TRANSACTION_x lines from stdin
                    MainKt --once                           print one status snapshot
