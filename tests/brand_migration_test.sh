@@ -33,8 +33,10 @@ has .github/workflows/release.yml '<!-- synthesiscore:auto -->'
 [ "$(grep -c 'fun main' "$root/app/src/main/java/com/febricahyaa/synthesiscore/MainKt.kt")" = 1 ] || bad "entry point count"
 
 # 5, 7, 9-14, 20. everything except the label files is unchanged since the pre-migration base.
-base=7b6e1cd
-if git -C "$root" cat-file -e "$base^{commit}" 2>/dev/null; then
+# Migration-time audit only: set BRAND_AUDIT_BASE=7b6e1cd to compare against the pre-migration
+# commit. Off by default so later legitimate changes do not fail this test.
+base=${BRAND_AUDIT_BASE:-}
+if [ -n "$base" ] && git -C "$root" cat-file -e "$base^{commit}" 2>/dev/null; then
 	others=$(cd "$root" && git ls-files | grep -vxE 'README.md|app/src/main/res/values/strings.xml|app/src/main/java/com/febricahyaa/synthesiscore/MainKt.kt|\.github/workflows/release.yml|\.github/workflows/ci.yml|\.github/ISSUE_TEMPLATE/(bug_report|feature_request).yml|docs/architecture/ZAIRENKAI_INTELLIGENCE_BRAND_MIGRATION.md|docs/architecture/synthesiscore_identifiers.tsv|tests/brand_migration_test.sh')
 	# shellcheck disable=SC2086
 	git -C "$root" diff --quiet "$base" -- $others || bad "files outside the label set changed since $base"
@@ -45,7 +47,7 @@ if git -C "$root" cat-file -e "$base^{commit}" 2>/dev/null; then
 	ci=$(git -C "$root" diff -U0 "$base" -- .github/workflows/ci.yml | grep -E '^[-+][^-+]' | grep -v 'brand_migration_test\|Brand migration')
 	[ -z "$ci" ] || bad "unexpected CI change: $ci"
 else
-	echo "note: base $base not available (shallow clone); history checks skipped"
+	echo "note: history checks skipped (BRAND_AUDIT_BASE unset or unavailable)"
 fi
 
 # 21. every remaining reference classified
