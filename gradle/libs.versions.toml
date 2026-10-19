@@ -1,6 +1,6 @@
 [versions]
 agp = "9.4.1"
-hiddenapibypass = "6.1"
+hiddenapibypass = "6.2"
 junit = "4.13.2"
 
 [libraries]
